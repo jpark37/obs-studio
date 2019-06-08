@@ -16,6 +16,7 @@ endfunction()
 # https://discourse.cmake.org/t/platform-id-vs-win32-vs-cmake-system-name/1226/2
 if(OS_WINDOWS)
   add_subdirectory(coreaudio-encoder)
+  add_subdirectory(picoscope-source)
   add_subdirectory(win-wasapi)
   add_subdirectory(win-dshow)
   add_subdirectory(win-capture)
