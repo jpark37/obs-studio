@@ -48,6 +48,11 @@ struct VertTexPos {
 	float4 pos : POSITION;
 };
 
+struct VertTexTexPos {
+	float4 uvuv  : TEXCOORD0;
+	float4 pos : POSITION;
+};
+
 struct VertPosWide {
 	float3 pos_wide : TEXCOORD0;
 	float4 pos : POSITION;
@@ -60,6 +65,10 @@ struct VertTexPosWide {
 
 struct FragTex {
 	float2 uv : TEXCOORD0;
+};
+
+struct FragTexTex {
+	float4 uvuv : TEXCOORD0;
 };
 
 struct FragPosWide {
@@ -101,7 +110,7 @@ VertTexPosWide VSTexPos_Left(uint id : VERTEXID)
 	return vert_out;
 }
 
-VertTexPos VSTexPosHalf_Reverse(uint id : VERTEXID)
+VertTexTexPos VSTexTexPosHalf_Reverse(uint id : VERTEXID)
 {
 	float idHigh = float(id >> 1);
 	float idLow = float(id & uint(1));
@@ -112,8 +121,8 @@ VertTexPos VSTexPosHalf_Reverse(uint id : VERTEXID)
 	float u = idHigh * 2.0;
 	float v = obs_glsl_compile ? (idLow * 2.0) : (1.0 - idLow * 2.0);
 
-	VertTexPos vert_out;
-	vert_out.uv = float2(width_d2 * u, height * v);
+	VertTexTexPos vert_out;
+	vert_out.uvuv = float4(width_d2 * u, height * v, u + width_x2_i, v);
 	vert_out.pos = float4(x, y, 0.0, 1.0);
 	return vert_out;
 }
@@ -143,7 +152,7 @@ VertPosWide VSPosWide_Reverse(uint id : VERTEXID)
 	float x = idHigh * 4.0 - 1.0;
 	float y = idLow * 4.0 - 1.0;
 
-	float u = idHigh * 2.0;
+	float u = idHigh * 2.0 + width_x2_i;
 	float v = obs_glsl_compile ? (idLow * 2.0) : (1.0 - idLow * 2.0);
 
 	VertPosWide vert_out;
@@ -210,36 +219,33 @@ float3 YUV_to_RGB(float3 yuv)
 	return float3(r, g, b);
 }
 
-float3 PSUYVY_Reverse(FragTex frag_in) : TARGET
+float3 PSUYVY_Reverse(FragTexTex frag_in) : TARGET
 {
-	float4 y2uv = image.Load(int3(frag_in.uv.xy, 0));
-	float2 y01 = y2uv.yw;
-	float2 cbcr = y2uv.zx;
-	float leftover = frac(frag_in.uv.x);
+	float2 y01 = image.Load(int3(frag_in.uvuv.xy, 0)).yw;
+	float2 cbcr = image.Sample(def_sampler, frag_in.uvuv.zw, 0).zx;
+	float leftover = frac(frag_in.uvuv.x);
 	float y = (leftover < 0.5) ? y01.x : y01.y;
 	float3 yuv = float3(y, cbcr);
 	float3 rgb = YUV_to_RGB(yuv);
 	return rgb;
 }
 
-float3 PSYUY2_Reverse(FragTex frag_in) : TARGET
+float3 PSYUY2_Reverse(FragTexTex frag_in) : TARGET
 {
-	float4 y2uv = image.Load(int3(frag_in.uv.xy, 0));
-	float2 y01 = y2uv.zx;
-	float2 cbcr = y2uv.yw;
-	float leftover = frac(frag_in.uv.x);
+	float2 y01 = image.Load(int3(frag_in.uvuv.xy, 0)).zx;
+	float2 cbcr = image.Sample(def_sampler, frag_in.uvuv.zw, 0).yw;
+	float leftover = frac(frag_in.uvuv.x);
 	float y = (leftover < 0.5) ? y01.x : y01.y;
 	float3 yuv = float3(y, cbcr);
 	float3 rgb = YUV_to_RGB(yuv);
 	return rgb;
 }
 
-float3 PSYVYU_Reverse(FragTex frag_in) : TARGET
+float3 PSYVYU_Reverse(FragTexTex frag_in) : TARGET
 {
-	float4 y2uv = image.Load(int3(frag_in.uv.xy, 0));
-	float2 y01 = y2uv.zx;
-	float2 cbcr = y2uv.wy;
-	float leftover = frac(frag_in.uv.x);
+	float2 y01 = image.Load(int3(frag_in.uvuv.xy, 0)).zx;
+	float2 cbcr = image.Sample(def_sampler, frag_in.uvuv.zw, 0).wy;
+	float leftover = frac(frag_in.uvuv.x);
 	float y = (leftover < 0.5) ? y01.x : y01.y;
 	float3 yuv = float3(y, cbcr);
 	float3 rgb = YUV_to_RGB(yuv);
@@ -443,7 +449,7 @@ technique UYVY_Reverse
 {
 	pass
 	{
-		vertex_shader = VSTexPosHalf_Reverse(id);
+		vertex_shader = VSTexTexPosHalf_Reverse(id);
 		pixel_shader  = PSUYVY_Reverse(frag_in);
 	}
 }
@@ -452,7 +458,7 @@ technique YUY2_Reverse
 {
 	pass
 	{
-		vertex_shader = VSTexPosHalf_Reverse(id);
+		vertex_shader = VSTexTexPosHalf_Reverse(id);
 		pixel_shader  = PSYUY2_Reverse(frag_in);
 	}
 }
@@ -461,7 +467,7 @@ technique YVYU_Reverse
 {
 	pass
 	{
-		vertex_shader = VSTexPosHalf_Reverse(id);
+		vertex_shader = VSTexTexPosHalf_Reverse(id);
 		pixel_shader  = PSYVYU_Reverse(frag_in);
 	}
 }
