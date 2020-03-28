@@ -533,7 +533,7 @@ static inline bool init_shared_info(size_t size, HWND window)
 
 bool capture_init_shtex(struct shtex_data **data, HWND window, uint32_t base_cx,
 			uint32_t base_cy, uint32_t cx, uint32_t cy,
-			uint32_t format, bool flip, uintptr_t handle)
+			uint32_t format, bool flip, uintptr_t handle, bool keyed_mutex)
 {
 	if (!init_shared_info(sizeof(struct shtex_data), window)) {
 		hlog("capture_init_shtex: Failed to initialize memory");
@@ -542,6 +542,7 @@ bool capture_init_shtex(struct shtex_data **data, HWND window, uint32_t base_cx,
 
 	*data = shmem_info;
 	(*data)->tex_handle = (uint32_t)handle;
+	(*data)->keyed_mutex = keyed_mutex;
 
 	global_hook_info->hook_ver_major = HOOK_VER_MAJOR;
 	global_hook_info->hook_ver_minor = HOOK_VER_MINOR;

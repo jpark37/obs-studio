@@ -17,7 +17,7 @@
 #include <vulkan/vulkan_win32.h>
 
 #define COBJMACROS
-#include <dxgi.h>
+#include <dxgi1_2.h>
 #include <d3d11.h>
 
 #include "vulkan-capture.h"
@@ -34,13 +34,6 @@
 
 /* use the loader's dispatch table pointer as a key for internal data maps */
 #define GET_LDT(x) (*(void **)x)
-
-/* clang-format off */
-static const GUID dxgi_factory1_guid =
-{0x770aae78, 0xf26f, 0x4dba, {0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87}};
-static const GUID dxgi_resource_guid =
-{0x035f3ab4, 0x482e, 0x4e50, {0xb4, 0x1f, 0x8a, 0x7f, 0x8b, 0xd8, 0x96, 0x0b}};
-/* clang-format on */
 
 static bool vulkan_seen = false;
 static SRWLOCK mutex = SRWLOCK_INIT; // Faster CRITICAL_SECTION
@@ -60,6 +53,7 @@ struct vk_swap_data {
 	uint32_t image_count;
 
 	HANDLE handle;
+	bool handle_exists;
 	struct shtex_data *shtex_info;
 	ID3D11Texture2D *d3d11_tex;
 	bool captured;
@@ -230,11 +224,14 @@ static void vk_shtex_free(struct vk_data *data)
 			data->funcs.FreeMemory(data->device, swap->export_mem,
 					       NULL);
 
+		if (swap->handle_exists)
+			CloseHandle(swap->handle);
+
 		if (swap->d3d11_tex) {
-			ID3D11Resource_Release(swap->d3d11_tex);
+			ID3D11Texture2D_Release(swap->d3d11_tex);
 		}
 
-		swap->handle = INVALID_HANDLE_VALUE;
+		swap->handle_exists = false;
 		swap->d3d11_tex = NULL;
 		swap->export_mem = VK_NULL_HANDLE;
 		swap->export_image = VK_NULL_HANDLE;
@@ -436,7 +433,7 @@ static inline bool vk_shtex_init_d3d11(struct vk_data *data)
 		return false;
 	}
 
-	hr = create_factory(&dxgi_factory1_guid, (void **)&factory);
+	hr = create_factory(&IID_IDXGIFactory1, (void **)&factory);
 	if (FAILED(hr)) {
 		flog_hr("failed to create factory", hr);
 		return false;
@@ -452,9 +449,8 @@ static inline bool vk_shtex_init_d3d11(struct vk_data *data)
 	}
 
 	static const D3D_FEATURE_LEVEL feature_levels[] = {
-		D3D_FEATURE_LEVEL_11_0,
-		D3D_FEATURE_LEVEL_10_1,
-		D3D_FEATURE_LEVEL_10_0,
+		D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
+		D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0,
 		D3D_FEATURE_LEVEL_9_3,
 	};
 
@@ -475,7 +471,7 @@ static inline bool vk_shtex_init_d3d11(struct vk_data *data)
 static inline bool vk_shtex_init_d3d11_tex(struct vk_data *data,
 					   struct vk_swap_data *swap)
 {
-	IDXGIResource *dxgi_res;
+	IDXGIResource1 *dxgi_res;
 	HRESULT hr;
 
 	D3D11_TEXTURE2D_DESC desc = {0};
@@ -491,7 +487,8 @@ static inline bool vk_shtex_init_d3d11_tex(struct vk_data *data,
 	desc.SampleDesc.Count = 1;
 	desc.SampleDesc.Quality = 0;
 	desc.Usage = D3D11_USAGE_DEFAULT;
-	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+			 D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
 	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
 	hr = ID3D11Device_CreateTexture2D(data->d3d11_device, &desc, NULL,
@@ -501,18 +498,23 @@ static inline bool vk_shtex_init_d3d11_tex(struct vk_data *data,
 		return false;
 	}
 
-	hr = ID3D11Device_QueryInterface(swap->d3d11_tex, &dxgi_resource_guid,
-					 (void **)&dxgi_res);
+	hr = ID3D11Texture2D_QueryInterface(swap->d3d11_tex,
+					    &IID_IDXGIResource1, &dxgi_res);
 	if (FAILED(hr)) {
-		flog_hr("failed to get IDXGIResource", hr);
+		flog_hr("failed to get IDXGIResource1", hr);
 		return false;
 	}
 
-	hr = IDXGIResource_GetSharedHandle(dxgi_res, &swap->handle);
-	IDXGIResource_Release(dxgi_res);
+	hr = IDXGIResource1_CreateSharedHandle(
+		dxgi_res, NULL,
+		GENERIC_ALL | DXGI_SHARED_RESOURCE_READ |
+			DXGI_SHARED_RESOURCE_WRITE,
+		NULL, &swap->handle);
+	IDXGIResource1_Release(dxgi_res);
 
-	if (FAILED(hr)) {
-		flog_hr("failed to get shared handle", hr);
+	swap->handle_exists = SUCCEEDED(hr);
+	if (!swap->handle_exists) {
+		flog_hr("failed to create shared handle", hr);
 		return false;
 	}
 
@@ -532,8 +534,7 @@ static inline bool vk_shtex_init_vulkan_tex(struct vk_data *data,
 	VkExternalMemoryImageCreateInfo emici;
 	emici.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
 	emici.pNext = NULL;
-	emici.handleTypes =
-		VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+	emici.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
 
 	VkImageCreateInfo ici;
 	ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -627,8 +628,7 @@ static inline bool vk_shtex_init_vulkan_tex(struct vk_data *data,
 	imw32hi.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR;
 	imw32hi.pNext = NULL;
 	imw32hi.name = NULL;
-	imw32hi.handleType =
-		VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+	imw32hi.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
 	imw32hi.handle = swap->handle;
 
 	VkMemoryAllocateInfo mai;
@@ -703,7 +703,7 @@ static bool vk_shtex_init(struct vk_data *data, HWND window,
 		&swap->shtex_info, window, swap->image_extent.width,
 		swap->image_extent.height, swap->image_extent.width,
 		swap->image_extent.height, (uint32_t)swap->format, false,
-		(uintptr_t)swap->handle);
+		(uintptr_t)swap->handle, true);
 
 	if (swap->captured) {
 		if (global_hook_info->force_shmem) {
@@ -964,9 +964,25 @@ static void vk_shtex_capture(struct vk_data *data,
 
 	/* ------------------------------------------------------ */
 
+	const uint32_t NO_TIMEOUT = 0;
+	const uint64_t ACQUIRE_KEY = 1;
+	const uint64_t RELEASE_KEY = 2;
+
+	VkWin32KeyedMutexAcquireReleaseInfoKHR keyed_mutex_info;
+	keyed_mutex_info.sType =
+		VK_STRUCTURE_TYPE_WIN32_KEYED_MUTEX_ACQUIRE_RELEASE_INFO_KHR;
+	keyed_mutex_info.pNext = NULL;
+	keyed_mutex_info.acquireCount = 1;
+	keyed_mutex_info.pAcquireSyncs = &swap->export_mem;
+	keyed_mutex_info.pAcquireKeys = &ACQUIRE_KEY;
+	keyed_mutex_info.pAcquireTimeouts = &NO_TIMEOUT;
+	keyed_mutex_info.releaseCount = 1;
+	keyed_mutex_info.pReleaseSyncs = &swap->export_mem;
+	keyed_mutex_info.pReleaseKeys = &RELEASE_KEY;
+
 	VkSubmitInfo submit_info;
 	submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	submit_info.pNext = NULL;
+	submit_info.pNext = &keyed_mutex_info;
 	submit_info.waitSemaphoreCount = 0;
 	submit_info.pWaitSemaphores = NULL;
 	submit_info.pWaitDstStageMask = NULL;
@@ -1139,6 +1155,7 @@ static VkResult VKAPI OBS_CreateInstance(const VkInstanceCreateInfo *cinfo,
 	GETADDR(DestroySurfaceKHR);
 	GETADDR(GetPhysicalDeviceMemoryProperties);
 	GETADDR(GetPhysicalDeviceImageFormatProperties2);
+	GETADDR(EnumerateDeviceExtensionProperties);
 #undef GETADDR
 
 	data->valid = !funcs_not_found;
@@ -1167,7 +1184,7 @@ vk_shared_tex_supported(struct vk_inst_funcs *funcs,
 		VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO;
 	external_info.pNext = NULL;
 	external_info.handleType =
-		VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_KMT_BIT;
+		VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
 
 	info.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
 	info.pNext = &external_info;
@@ -1319,6 +1336,47 @@ static VkResult VKAPI OBS_CreateDevice(VkPhysicalDevice phy_device,
 		goto fail;
 	}
 
+	const char *required_device_extensions[] = {
+		VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
+		VK_KHR_WIN32_KEYED_MUTEX_EXTENSION_NAME};
+
+	uint32_t device_extension_count = 0;
+	ret = ifuncs->EnumerateDeviceExtensionProperties(
+		phy_device, NULL, &device_extension_count, NULL);
+	if (ret != VK_SUCCESS)
+		goto fail;
+
+	VkExtensionProperties *device_extensions = _malloca(
+		sizeof(VkExtensionProperties) * device_extension_count);
+	ret = ifuncs->EnumerateDeviceExtensionProperties(
+		phy_device, NULL, &device_extension_count, device_extensions);
+	if (ret != VK_SUCCESS)
+		goto fail;
+
+	bool extensions_found = true;
+	for (uint32_t i = 0; i < _countof(required_device_extensions); i++) {
+		const char *const required_extension =
+			required_device_extensions[i];
+
+		bool found = false;
+		for (uint32_t j = 0; j < device_extension_count; j++) {
+			if (!strcmp(required_extension,
+				    device_extensions[j].extensionName)) {
+				found = true;
+				break;
+			}
+		}
+
+		if (!found) {
+			flog("missing device extension: %s",
+			     required_extension);
+			extensions_found = false;
+		}
+	}
+
+	if (!extensions_found)
+		goto fail;
+
 	VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
 	VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
 				  VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -1405,6 +1463,8 @@ OBS_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *cinfo,
 	swap->format = cinfo->imageFormat;
 	swap->hwnd = find_surf_hwnd(data->inst_data, cinfo->surface);
 	swap->image_count = count;
+	swap->handle_exists = false;
+	swap->d3d11_tex = NULL;
 
 	return VK_SUCCESS;
 }

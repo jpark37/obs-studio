@@ -65,6 +65,7 @@ struct shmem_data {
 
 struct shtex_data {
 	uint32_t tex_handle;
+	bool keyed_mutex;
 };
 
 enum capture_type {

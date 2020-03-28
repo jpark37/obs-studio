@@ -278,17 +278,32 @@ gs_texture_2d::gs_texture_2d(gs_device_t *device, ID3D11Texture2D *nv12tex,
 		InitRenderTargets();
 }
 
-gs_texture_2d::gs_texture_2d(gs_device_t *device, uint32_t handle)
+gs_texture_2d::gs_texture_2d(gs_device_t *device, uint32_t handle,
+			     bool keyed_mutex)
 	: gs_texture(device, gs_type::gs_texture_2d, GS_TEXTURE_2D),
 	  isShared(true),
 	  sharedHandle(handle)
 {
 	HRESULT hr;
-	hr = device->device->OpenSharedResource((HANDLE)(uintptr_t)handle,
-						__uuidof(ID3D11Texture2D),
-						(void **)texture.Assign());
-	if (FAILED(hr))
-		throw HRError("Failed to open shared 2D texture", hr);
+	if (keyed_mutex) {
+		ID3D11Device1 *device1;
+		hr = device->device->QueryInterface(IID_PPV_ARGS(&device1));
+		if (FAILED(hr))
+			throw HRError("Failed to get IDXGIDevice1", hr);
+
+		hr = device1->OpenSharedResource1(
+			(HANDLE)(uintptr_t)handle,
+			IID_PPV_ARGS(texture.Assign()));
+		device1->Release();
+		if (FAILED(hr))
+			throw HRError("Failed to open shared 2D texture", hr);
+	} else {
+		hr = device->device->OpenSharedResource(
+			(HANDLE)(uintptr_t)handle,
+			IID_PPV_ARGS(texture.Assign()));
+		if (FAILED(hr))
+			throw HRError("Failed to open shared 2D texture", hr);
+	}
 
 	texture->GetDesc(&td);
 

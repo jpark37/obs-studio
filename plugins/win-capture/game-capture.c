@@ -154,6 +154,8 @@ struct game_capture {
 	struct game_capture_config config;
 
 	ipc_pipe_server_t pipe;
+	HANDLE texture_handle;
+	bool texture_handle_exists;
 	gs_texture_t *texture;
 	struct hook_info *global_hook_info;
 	HANDLE keepalive_mutex;
@@ -335,6 +337,11 @@ static void stop_capture(struct game_capture *gc)
 	close_handle(&gc->target_process);
 	close_handle(&gc->texture_mutexes[0]);
 	close_handle(&gc->texture_mutexes[1]);
+
+	if (gc->texture_handle_exists) {
+		CloseHandle(gc->texture_handle);
+		gc->texture_handle_exists = false;
+	}
 
 	if (gc->texture) {
 		obs_enter_graphics();
@@ -657,7 +664,8 @@ static inline bool is_64bit_process(HANDLE process)
 static inline bool open_target_process(struct game_capture *gc)
 {
 	gc->target_process = open_process(
-		PROCESS_QUERY_INFORMATION | SYNCHRONIZE, false, gc->process_id);
+		PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
+		false, gc->process_id);
 	if (!gc->target_process) {
 		warn("could not open process: %s", gc->config.executable);
 		return false;
@@ -1593,6 +1601,11 @@ static inline bool init_shmem_capture(struct game_capture *gc)
 			 ? GS_BGRA
 			 : convert_format(gc->global_hook_info->format);
 
+	if (gc->texture_handle_exists) {
+		CloseHandle(gc->texture_handle);
+		gc->texture_handle_exists = false;
+	}
+
 	obs_enter_graphics();
 	gs_texture_destroy(gc->texture);
 	gc->texture =
@@ -1610,9 +1623,32 @@ static inline bool init_shmem_capture(struct game_capture *gc)
 
 static inline bool init_shtex_capture(struct game_capture *gc)
 {
+	if (gc->texture_handle_exists) {
+		CloseHandle(gc->texture_handle);
+		gc->texture_handle_exists = false;
+	}
+
+	gc->texture_handle_exists =
+		DuplicateHandle(gc->target_process,
+				(HANDLE)(uintptr_t)gc->shtex_data->tex_handle,
+				GetCurrentProcess(), &gc->texture_handle, 0,
+				FALSE, DUPLICATE_SAME_ACCESS) != 0;
+	if (!gc->texture_handle_exists) {
+		warn("init_shtex_capture: failed to duplicate handle");
+		return false;
+	}
+
 	obs_enter_graphics();
 	gs_texture_destroy(gc->texture);
-	gc->texture = gs_texture_open_shared(gc->shtex_data->tex_handle);
+	if (gc->shtex_data->keyed_mutex) {
+		gc->texture = gs_texture_open_shared_km(
+			(uint32_t)(uintptr_t)gc->texture_handle);
+		gs_texture_acquire_sync(gc->texture, 0, INFINITE);
+		gs_texture_release_sync(gc->texture, 1);
+	} else {
+		gc->texture =
+			gs_texture_open_shared(gc->shtex_data->tex_handle);
+	}
 	obs_leave_graphics();
 
 	if (!gc->texture) {
@@ -1844,6 +1880,14 @@ static void game_capture_render(void *data, gs_effect_t *effect)
 					     ? OBS_EFFECT_DEFAULT
 					     : OBS_EFFECT_OPAQUE);
 
+	const bool keyed_mutex = gc->shtex_data->keyed_mutex;
+	if (keyed_mutex) {
+		const bool acquired =
+			gs_texture_acquire_sync(gc->texture, 2, 0) == 0;
+		if (!acquired)
+			return;
+	}
+
 	while (gs_effect_loop(effect, "Draw")) {
 		obs_source_draw(gc->texture, 0, 0, 0, 0,
 				gc->global_hook_info->flip);
@@ -1853,6 +1897,9 @@ static void game_capture_render(void *data, gs_effect_t *effect)
 			game_capture_render_cursor(gc);
 		}
 	}
+
+	if (keyed_mutex)
+		gs_texture_release_sync(gc->texture, 1);
 
 	if (!gc->config.allow_transparency && gc->config.cursor &&
 	    !gc->cursor_hidden) {

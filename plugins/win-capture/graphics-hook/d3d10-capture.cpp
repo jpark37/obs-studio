@@ -514,7 +514,7 @@ static bool d3d10_shtex_init(HWND window)
 	}
 	if (!capture_init_shtex(&data.shtex_info, window, data.base_cx,
 				data.base_cy, data.cx, data.cy, data.format,
-				false, (uintptr_t)data.handle)) {
+				false, (uintptr_t)data.handle, false)) {
 		return false;
 	}
 

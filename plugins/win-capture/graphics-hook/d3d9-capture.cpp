@@ -304,7 +304,7 @@ static bool d3d9_shtex_init(uint32_t cx, uint32_t cy, HWND window)
 	}
 	if (!capture_init_shtex(&data.shtex_info, window, cx, cy, data.cx,
 				data.cy, data.dxgi_format, false,
-				(uintptr_t)data.handle)) {
+				(uintptr_t)data.handle, false)) {
 		return false;
 	}
 

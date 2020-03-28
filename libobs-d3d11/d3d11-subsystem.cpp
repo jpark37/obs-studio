@@ -229,6 +229,7 @@ void gs_device::InitFactory(uint32_t adapterIdx)
 }
 
 const static D3D_FEATURE_LEVEL featureLevels[] = {
+	D3D_FEATURE_LEVEL_11_1,
 	D3D_FEATURE_LEVEL_11_0,
 	D3D_FEATURE_LEVEL_10_1,
 	D3D_FEATURE_LEVEL_10_0,
@@ -2649,13 +2650,32 @@ extern "C" EXPORT gs_texture_t *device_texture_open_shared(gs_device_t *device,
 {
 	gs_texture *texture = nullptr;
 	try {
-		texture = new gs_texture_2d(device, handle);
+		texture = new gs_texture_2d(device, handle, false);
 	} catch (const HRError &error) {
 		blog(LOG_ERROR, "gs_texture_open_shared (D3D11): %s (%08lX)",
 		     error.str, error.hr);
 		LogD3D11ErrorDetails(error, device);
 	} catch (const char *error) {
 		blog(LOG_ERROR, "gs_texture_open_shared (D3D11): %s", error);
+	}
+
+	return texture;
+}
+
+extern "C" EXPORT gs_texture_t *
+device_texture_open_shared_km(gs_device_t *device, uint32_t handle)
+{
+	gs_texture *texture = nullptr;
+	try {
+		texture = new gs_texture_2d(device, handle, true);
+	} catch (const HRError &error) {
+		blog(LOG_ERROR,
+		     "device_texture_open_shared_km (D3D11): %s (%08lX)",
+		     error.str, error.hr);
+		LogD3D11ErrorDetails(error, device);
+	} catch (const char *error) {
+		blog(LOG_ERROR, "device_texture_open_shared_km (D3D11): %s",
+		     error);
 	}
 
 	return texture;
