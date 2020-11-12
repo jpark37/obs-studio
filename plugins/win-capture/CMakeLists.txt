@@ -24,6 +24,7 @@ set(win-capture_SOURCES
 	inject-library.c
 	cursor-capture.c
 	game-capture.c
+	safe-d3d-capture.c
 	window-helpers.c
 	monitor-capture.c
 	window-capture.c
@@ -32,9 +33,19 @@ set(win-capture_SOURCES
 	duplicator-monitor-capture.c
 	plugin-main.c)
 
+set(LfgGameCapture_SOURCES
+	LfgGameCapture/StcClient.c
+	LfgGameCapture/StcClient.h
+	LfgGameCapture/StcCommon.h
+	LfgGameCapture/StcMisc.c
+	LfgGameCapture/StcMisc.h)
+source_group("LfgGameCapture" FILES ${LfgGameCapture_SOURCES})
+
 add_library(win-capture MODULE
+	${LfgGameCapture_SOURCES}
 	${win-capture_SOURCES}
 	${win-capture_HEADERS})
+include_directories("LfgGameCapture")
 target_link_libraries(win-capture
 	${win-capture_PLATFORM_DEPS}
 	libobs
