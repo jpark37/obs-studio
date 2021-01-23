@@ -579,6 +579,18 @@ float3 PSUYVY_Reverse(FragTexTex frag_in) : TARGET
 	return rgb;
 }
 
+float3 Rec601_to_Rec709(float3 rgb)
+{
+	rgb = pow(rgb, 2.4);
+	float3x3 m = float3x3(
+		0.93954206377323979, 0.050181356859867771, 0.010276579366893024,
+		0.017772223143560799, 0.96579286249690444, 0.016434914359534619,
+		-0.0016215999431855414, -0.0043697496597356889, 1.0059913496029211);
+	rgb = mul(m, rgb);
+	rgb = pow(rgb, 1. / 2.4);
+	return rgb;
+}
+
 float3 PSYUY2_Reverse(FragTexTex frag_in) : TARGET
 {
 	float2 y01 = image.Load(int3(frag_in.uvuv.xy, 0)).zx;
@@ -587,6 +599,7 @@ float3 PSYUY2_Reverse(FragTexTex frag_in) : TARGET
 	float y = (leftover < 0.5) ? y01.x : y01.y;
 	float3 yuv = float3(y, cbcr);
 	float3 rgb = YUV_to_RGB(yuv);
+	rgb = Rec601_to_Rec709(rgb);
 	return rgb;
 }
 
