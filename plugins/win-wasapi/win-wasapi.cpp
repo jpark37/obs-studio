@@ -10,6 +10,10 @@
 #include <util/threading.h>
 #include <util/util_uint64.h>
 
+#include <audioclientactivationparams.h>
+#include <wrl/implements.h>
+#pragma comment(lib, "Mmdevapi.lib")
+
 #include <thread>
 
 using namespace std;
@@ -22,7 +26,11 @@ static void GetWASAPIDefaults(obs_data_t *settings);
 #define OBS_KSAUDIO_SPEAKER_4POINT1 \
 	(KSAUDIO_SPEAKER_SURROUND | SPEAKER_LOW_FREQUENCY)
 
-class WASAPISource {
+class WASAPISource
+	: public Microsoft::WRL::RuntimeClass<
+		  Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
+		  Microsoft::WRL::FtmBase,
+		  IActivateAudioInterfaceCompletionHandler> {
 	ComPtr<IMMDevice> device;
 	ComPtr<IAudioClient> client;
 	ComPtr<IAudioCaptureClient> capture;
@@ -39,6 +47,7 @@ class WASAPISource {
 	bool isInputDevice;
 	bool useDeviceTiming = false;
 	bool isDefaultDevice = false;
+	volatile bool eventHack = false;
 
 	bool reconnecting = false;
 	bool previouslyFailed = false;
@@ -74,6 +83,19 @@ class WASAPISource {
 	bool TryInitialize();
 
 	void UpdateSettings(obs_data_t *settings);
+
+	virtual HRESULT STDMETHODCALLTYPE ActivateCompleted(
+		/* [annotation][in] */
+		_In_ IActivateAudioInterfaceAsyncOperation *activateOperation)
+		override final
+	{
+		HRESULT hr, hr_activate;
+		hr = activateOperation->GetActivateResult(
+			&hr_activate, (IUnknown **)client.Assign());
+
+		eventHack = false;
+		return SUCCEEDED(hr) ? hr_activate : hr;
+	}
 
 public:
 	WASAPISource(obs_data_t *settings, obs_source_t *source_, bool input);
@@ -242,10 +264,45 @@ void WASAPISource::InitClient()
 	HRESULT res;
 	DWORD flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
 
+#if 1
+	AUDIOCLIENT_ACTIVATION_PARAMS *const p =
+		static_cast<AUDIOCLIENT_ACTIVATION_PARAMS *>(
+			CoTaskMemAlloc(sizeof(AUDIOCLIENT_ACTIVATION_PARAMS)));
+	if (!p)
+		throw "Failed to allocate activation params";
+	p->ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
+	p->ProcessLoopbackParams.TargetProcessId = 27748;
+	p->ProcessLoopbackParams.ProcessLoopbackMode =
+		PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+	PROPVARIANT var;
+	PropVariantInit(&var);
+	var.vt = VT_BLOB;
+	var.blob.cbSize = sizeof(*p);
+	var.blob.pBlobData = reinterpret_cast<BYTE *>(p);
+	eventHack = true;
+	IActivateAudioInterfaceAsyncOperation *activationOperation;
+	res = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+					  __uuidof(IAudioClient), &var, this,
+					  &activationOperation);
+	PropVariantClear(&var);
+
+	if (FAILED(res)) {
+		eventHack = false;
+		throw HRError("Failed to activate process-local client context",
+			      res);
+	}
+
+	activationOperation->Release();
+
+	while (eventHack) {
+		Sleep(0);
+	}
+#else
 	res = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
 			       (void **)client.Assign());
 	if (FAILED(res))
 		throw HRError("Failed to activate client context", res);
+#endif
 
 	res = client->GetMixFormat(&wfex);
 	if (FAILED(res))
@@ -646,7 +703,9 @@ static void *CreateWASAPISource(obs_data_t *settings, obs_source_t *source,
 				bool input)
 {
 	try {
-		return new WASAPISource(settings, source, input);
+		return Microsoft::WRL::Make<WASAPISource>(settings, source,
+							  input)
+			.Detach();
 	} catch (const char *error) {
 		blog(LOG_ERROR, "[CreateWASAPISource] %s", error);
 	}
@@ -666,7 +725,7 @@ static void *CreateWASAPIOutput(obs_data_t *settings, obs_source_t *source)
 
 static void DestroyWASAPISource(void *obj)
 {
-	delete static_cast<WASAPISource *>(obj);
+	static_cast<WASAPISource *>(obj)->Release();
 }
 
 static void UpdateWASAPISource(void *obj, obs_data_t *settings)
