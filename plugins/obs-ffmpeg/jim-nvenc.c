@@ -347,34 +347,31 @@ static bool init_encoder(struct nvenc_data *enc, obs_data_t *settings,
 	/* -------------------------- */
 	/* get preset                 */
 
-	GUID nv_preset = NV_ENC_PRESET_DEFAULT_GUID;
+	GUID nv_preset = NV_ENC_PRESET_P4_GUID;
+	NV_ENC_TUNING_INFO nv_tuning = NV_ENC_TUNING_INFO_HIGH_QUALITY;
 	bool twopass = false;
-	bool hp = false;
-	bool ll = false;
 
 	if (astrcmpi(preset, "hq") == 0) {
-		nv_preset = NV_ENC_PRESET_HQ_GUID;
+		nv_preset = NV_ENC_PRESET_P7_GUID;
 
 	} else if (astrcmpi(preset, "mq") == 0) {
-		nv_preset = NV_ENC_PRESET_HQ_GUID;
+		nv_preset = NV_ENC_PRESET_P7_GUID;
 		twopass = true;
 
 	} else if (astrcmpi(preset, "hp") == 0) {
-		nv_preset = NV_ENC_PRESET_HP_GUID;
-		hp = true;
+		nv_preset = NV_ENC_PRESET_P1_GUID;
 
 	} else if (astrcmpi(preset, "ll") == 0) {
-		nv_preset = NV_ENC_PRESET_LOW_LATENCY_DEFAULT_GUID;
-		ll = true;
+		nv_preset = NV_ENC_PRESET_P4_GUID;
+		nv_tuning = NV_ENC_TUNING_INFO_LOW_LATENCY;
 
 	} else if (astrcmpi(preset, "llhq") == 0) {
-		nv_preset = NV_ENC_PRESET_LOW_LATENCY_HQ_GUID;
-		ll = true;
+		nv_preset = NV_ENC_PRESET_P7_GUID;
+		nv_tuning = NV_ENC_TUNING_INFO_LOW_LATENCY;
 
 	} else if (astrcmpi(preset, "llhp") == 0) {
-		nv_preset = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
-		hp = true;
-		ll = true;
+		nv_preset = NV_ENC_PRESET_P1_GUID;
+		nv_tuning = NV_ENC_TUNING_INFO_LOW_LATENCY;
 	}
 
 	const bool rc_lossless = astrcmpi(rc, "lossless") == 0;
@@ -382,8 +379,7 @@ static bool init_encoder(struct nvenc_data *enc, obs_data_t *settings,
 	if (rc_lossless) {
 		lossless = nv_get_cap(enc, NV_ENC_CAPS_SUPPORT_LOSSLESS_ENCODE);
 		if (lossless) {
-			nv_preset = hp ? NV_ENC_PRESET_LOSSLESS_HP_GUID
-				       : NV_ENC_PRESET_LOSSLESS_DEFAULT_GUID;
+			nv_tuning = NV_ENC_TUNING_INFO_LOSSLESS;
 		} else {
 			warn("lossless encode is not supported, ignoring");
 		}
@@ -395,9 +391,9 @@ static bool init_encoder(struct nvenc_data *enc, obs_data_t *settings,
 	NV_ENC_PRESET_CONFIG preset_config = {NV_ENC_PRESET_CONFIG_VER,
 					      {NV_ENC_CONFIG_VER}};
 
-	err = nv.nvEncGetEncodePresetConfig(enc->session,
-					    NV_ENC_CODEC_H264_GUID, nv_preset,
-					    &preset_config);
+	err = nv.nvEncGetEncodePresetConfigEx(enc->session,
+					      NV_ENC_CODEC_H264_GUID, nv_preset,
+					      nv_tuning, &preset_config);
 	if (nv_failed(enc->encoder, err, __FUNCTION__,
 		      "nvEncGetEncodePresetConfig")) {
 		return false;
@@ -433,6 +429,7 @@ static bool init_encoder(struct nvenc_data *enc, obs_data_t *settings,
 	params->enableEncodeAsync = 1;
 	params->enablePTD = 1;
 	params->encodeConfig = &enc->config;
+	params->tuningInfo = nv_tuning;
 	config->gopLength = gop_size;
 	config->frameIntervalP = 1 + bf;
 	h264_config->idrPeriod = gop_size;
