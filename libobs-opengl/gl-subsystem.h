@@ -466,6 +466,8 @@ struct gs_shader {
 
 struct program_param {
 	GLint obj;
+	GLuint buffer;
+	GLint offset;
 	struct gs_shader_param *param;
 };
 
@@ -477,6 +479,17 @@ struct gs_program {
 
 	DARRAY(struct program_param) params;
 	DARRAY(GLint) attribs;
+
+	GLuint globals_vs;
+	GLint global_uniform_count_vs;
+	GLint global_binding_vs;
+	GLint *global_indices_vs;
+	GLint global_data_size_vs;
+	GLuint globals_ps;
+	GLint global_uniform_count_ps;
+	GLint global_binding_ps;
+	GLint *global_indices_ps;
+	GLint global_data_size_ps;
 
 	struct gs_program **prev_next;
 	struct gs_program *next;

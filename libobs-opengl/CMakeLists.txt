@@ -79,6 +79,7 @@ set(libobs-opengl_SOURCES
 	gl-helpers.c
 	gl-indexbuffer.c
 	gl-shader.c
+	gl-shaderconverter.cpp
 	gl-shaderparser.c
 	gl-stagesurf.c
 	gl-subsystem.c

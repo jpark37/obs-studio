@@ -46,7 +46,7 @@ static inline size_t sp_getsampler(struct gl_shader_parser *glsp,
 			return i;
 	}
 
-	return -1;
+	return SIZE_MAX;
 }
 
 static inline int cmp_type(const char *name, const size_t name_len,
@@ -381,7 +381,7 @@ static inline bool gl_write_texture_call(struct gl_shader_parser *glsp,
 		if (!cf_next_token(cfp))
 			return false;
 		const size_t sampler_id = sp_getsampler(glsp, cfp->cur_token);
-		if (sampler_id == (size_t)-1)
+		if (sampler_id == SIZE_MAX)
 			return false;
 		if (!cf_next_token(cfp))
 			return false;

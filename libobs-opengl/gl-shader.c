@@ -24,6 +24,7 @@
 #include <graphics/matrix4.h>
 #include "gl-subsystem.h"
 #include "gl-shaderparser.h"
+#include <stdio.h>
 
 static inline void shader_param_init(struct gs_shader_param *param)
 {
@@ -132,6 +133,8 @@ static inline void gl_add_samplers(struct gs_shader *shader,
 static void get_attrib_type(const char *mapping, enum attrib_type *type,
 			    size_t *index)
 {
+	*index = 0;
+
 	if (strcmp(mapping, "POSITION") == 0) {
 		*type = ATTRIB_POSITION;
 
@@ -147,13 +150,10 @@ static void get_attrib_type(const char *mapping, enum attrib_type *type,
 	} else if (astrcmp_n(mapping, "TEXCOORD", 8) == 0) {
 		*type = ATTRIB_TEXCOORD;
 		*index = (*(mapping + 8)) - '0';
-		return;
 
 	} else if (strcmp(mapping, "TARGET") == 0) {
 		*type = ATTRIB_TARGET;
 	}
-
-	*index = 0;
 }
 
 static inline bool gl_process_attrib(struct gs_shader *program,
@@ -190,8 +190,8 @@ static inline bool gl_process_attribs(struct gs_shader *shader,
 }
 
 static bool gl_shader_init(struct gs_shader *shader,
-			   struct gl_shader_parser *glsp, const char *file,
-			   char **error_string)
+			   struct gl_shader_parser *glsp, const char *glsl,
+			   const char *file, char **error_string)
 {
 	GLenum type = convert_shader_type(shader->type);
 	int compiled = 0;
@@ -201,8 +201,7 @@ static bool gl_shader_init(struct gs_shader *shader,
 	if (!gl_success("glCreateShader") || !shader->obj)
 		return false;
 
-	glShaderSource(shader->obj, 1, (const GLchar **)&glsp->gl_string.array,
-		       0);
+	glShaderSource(shader->obj, 1, &glsl, 0);
 	if (!gl_success("glShaderSource"))
 		return false;
 
@@ -251,30 +250,40 @@ static bool gl_shader_init(struct gs_shader *shader,
 	return success;
 }
 
+const char *transpile_hlsl_to_glsl_vertex(struct gl_shader_parser *glsp,
+					  const char *s);
+const char *transpile_hlsl_to_glsl_pixel(struct gl_shader_parser *glsp,
+					 const char *s);
+void free_glsl_string(const char *s);
+
 static struct gs_shader *shader_create(gs_device_t *device,
 				       enum gs_shader_type type,
 				       const char *shader_str, const char *file,
 				       char **error_string)
 {
-	struct gs_shader *shader = bzalloc(sizeof(struct gs_shader));
+	struct gs_shader *shader = NULL;
 	struct gl_shader_parser glsp;
-	bool success = true;
-
-	shader->device = device;
-	shader->type = type;
 
 	gl_shader_parser_init(&glsp, type);
-	if (!gl_shader_parse(&glsp, shader_str, file))
-		success = false;
-	else
-		success = gl_shader_init(shader, &glsp, file, error_string);
 
-	if (!success) {
-		gs_shader_destroy(shader);
-		shader = NULL;
+	const char *glsl =
+		(type == GS_SHADER_VERTEX)
+			? transpile_hlsl_to_glsl_vertex(&glsp, shader_str)
+			: transpile_hlsl_to_glsl_pixel(&glsp, shader_str);
+	if (glsl) {
+		shader = bzalloc(sizeof(struct gs_shader));
+		shader->device = device;
+		shader->type = type;
+		if (!gl_shader_init(shader, &glsp, glsl, file, error_string)) {
+			gs_shader_destroy(shader);
+			shader = NULL;
+		}
+
+		free_glsl_string(glsl);
 	}
 
 	gl_shader_parser_free(&glsp);
+
 	return shader;
 }
 
@@ -465,55 +474,73 @@ static void program_set_param_data(struct gs_program *program,
 	if (pp->param->type == GS_SHADER_PARAM_BOOL ||
 	    pp->param->type == GS_SHADER_PARAM_INT) {
 		if (validate_param(pp, sizeof(int))) {
-			glUniform1iv(pp->obj, 1, (int *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(int), array);
 			gl_success("glUniform1iv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_INT2) {
 		if (validate_param(pp, sizeof(int) * 2)) {
-			glUniform2iv(pp->obj, 1, (int *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(int) * 2, array);
 			gl_success("glUniform2iv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_INT3) {
 		if (validate_param(pp, sizeof(int) * 3)) {
-			glUniform3iv(pp->obj, 1, (int *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(int) * 3, array);
 			gl_success("glUniform3iv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_INT4) {
 		if (validate_param(pp, sizeof(int) * 4)) {
-			glUniform4iv(pp->obj, 1, (int *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(int) * 4, array);
 			gl_success("glUniform4iv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_FLOAT) {
 		if (validate_param(pp, sizeof(float))) {
-			glUniform1fv(pp->obj, 1, (float *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(float), array);
 			gl_success("glUniform1fv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_VEC2) {
 		if (validate_param(pp, sizeof(struct vec2))) {
-			glUniform2fv(pp->obj, 1, (float *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(float) * 2, array);
 			gl_success("glUniform2fv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_VEC3) {
 		if (validate_param(pp, sizeof(float) * 3)) {
-			glUniform3fv(pp->obj, 1, (float *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(float) * 3, array);
 			gl_success("glUniform3fv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_VEC4) {
 		if (validate_param(pp, sizeof(struct vec4))) {
-			glUniform4fv(pp->obj, 1, (float *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(float) * 4, array);
 			gl_success("glUniform4fv");
 		}
 
 	} else if (pp->param->type == GS_SHADER_PARAM_MATRIX4X4) {
 		if (validate_param(pp, sizeof(struct matrix4))) {
-			glUniformMatrix4fv(pp->obj, 1, false, (float *)array);
+			glBindBuffer(GL_UNIFORM_BUFFER, pp->buffer);
+			glBufferSubData(GL_UNIFORM_BUFFER, pp->offset,
+					sizeof(struct matrix4), array);
 			gl_success("glUniformMatrix4fv");
 		}
 
@@ -540,6 +567,18 @@ void program_update_params(struct gs_program *program)
 	for (size_t i = 0; i < program->params.num; i++) {
 		struct program_param *pp = program->params.array + i;
 		program_set_param_data(program, pp);
+	}
+
+	if (program->global_data_size_vs > 0) {
+		glBindBufferRange(GL_UNIFORM_BUFFER, program->global_binding_vs,
+				  program->globals_vs, 0,
+				  program->global_data_size_vs);
+	}
+
+	if (program->global_data_size_ps > 0) {
+		glBindBufferRange(GL_UNIFORM_BUFFER, program->global_binding_ps,
+				  program->globals_ps, 0,
+				  program->global_data_size_ps);
 	}
 }
 
@@ -599,12 +638,54 @@ static bool assign_program_param(struct gs_program *program,
 {
 	struct program_param info;
 
-	info.obj = glGetUniformLocation(program->obj, param->name);
-	if (!gl_success("glGetUniformLocation"))
-		return false;
+	if (param->type == GS_SHADER_PARAM_TEXTURE) {
+		if (!gl_success("glGetUniformLocation"))
+			return false;
 
-	if (info.obj == -1) {
-		return true;
+		info.obj = glGetUniformLocation(program->obj, param->name);
+
+		if (info.obj == -1) {
+			return true;
+		}
+	} else {
+		GLint max_length;
+		glGetProgramiv(program->obj, GL_ACTIVE_UNIFORM_MAX_LENGTH,
+			       &max_length);
+		char *name = bmalloc(max_length);
+
+		GLuint globals;
+		GLint global_uniform_count;
+		GLint *global_indices;
+		const char *format;
+		if (param->shader->type == GS_SHADER_VERTEX) {
+			globals = program->globals_vs;
+			global_uniform_count = program->global_uniform_count_vs;
+			global_indices = program->global_indices_vs;
+			format = "type_Globals_VS.%s";
+		} else {
+			globals = program->globals_ps;
+			global_uniform_count = program->global_uniform_count_ps;
+			global_indices = program->global_indices_ps;
+			format = "type_Globals_PS.%s";
+		}
+		for (int uniform_index = 0;
+		     uniform_index < global_uniform_count; ++uniform_index) {
+			GLsizei unused;
+			GLuint index = global_indices[uniform_index];
+			glGetActiveUniformName(program->obj, index, max_length,
+					       &unused, name);
+			char full_name[256];
+			snprintf(full_name, sizeof(full_name), format,
+				 param->name);
+			if (strcmp(full_name, name) == 0) {
+				info.buffer = globals;
+				glGetActiveUniformsiv(program->obj, 1, &index,
+						      GL_UNIFORM_OFFSET,
+						      &info.offset);
+			}
+		}
+
+		bfree(name);
 	}
 
 	info.param = param;
@@ -668,6 +749,76 @@ struct gs_program *gs_program_create(struct gs_device *device)
 		goto error;
 	}
 
+	GLint block_count = 0;
+	GLuint binding_count = 0;
+	glGetProgramiv(program->obj, GL_ACTIVE_UNIFORM_BLOCKS, &block_count);
+	for (GLint block_index = 0; block_index < block_count; ++block_index) {
+		GLint block_name_length = 0;
+		glGetActiveUniformBlockiv(program->obj, block_index,
+					  GL_UNIFORM_BLOCK_NAME_LENGTH,
+					  &block_name_length);
+		char *const block_name = bmalloc(block_name_length);
+		glGetActiveUniformBlockName(program->obj, block_index,
+					    block_name_length, NULL,
+					    block_name);
+		if (strcmp(block_name, "type_Globals_VS") == 0) {
+			glGetActiveUniformBlockiv(
+				program->obj, block_index,
+				GL_UNIFORM_BLOCK_DATA_SIZE,
+				&program->global_data_size_vs);
+			glGenBuffers(1, &program->globals_vs);
+			glBindBuffer(GL_UNIFORM_BUFFER, program->globals_vs);
+			glBufferData(GL_UNIFORM_BUFFER,
+				     program->global_data_size_vs, NULL,
+				     GL_DYNAMIC_DRAW);
+			glUniformBlockBinding(program->obj, block_index,
+					      binding_count);
+			program->global_binding_vs = binding_count;
+			++binding_count;
+
+			program->global_uniform_count_vs = 0;
+			glGetActiveUniformBlockiv(
+				program->obj, block_index,
+				GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS,
+				&program->global_uniform_count_vs);
+			program->global_indices_vs =
+				bmalloc(sizeof(*program->global_indices_vs) *
+					program->global_uniform_count_vs);
+			glGetActiveUniformBlockiv(
+				program->obj, block_index,
+				GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES,
+				program->global_indices_vs);
+		} else if (strcmp(block_name, "type_Globals_PS") == 0) {
+			glGetActiveUniformBlockiv(
+				program->obj, block_index,
+				GL_UNIFORM_BLOCK_DATA_SIZE,
+				&program->global_data_size_ps);
+			glGenBuffers(1, &program->globals_ps);
+			glBindBuffer(GL_UNIFORM_BUFFER, program->globals_ps);
+			glBufferData(GL_UNIFORM_BUFFER,
+				     program->global_data_size_ps, NULL,
+				     GL_DYNAMIC_DRAW);
+			glUniformBlockBinding(program->obj, block_index,
+					      binding_count);
+			program->global_binding_ps = binding_count;
+			++binding_count;
+
+			program->global_uniform_count_ps = 0;
+			glGetActiveUniformBlockiv(
+				program->obj, block_index,
+				GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS,
+				&program->global_uniform_count_ps);
+			program->global_indices_ps =
+				bmalloc(sizeof(*program->global_indices_ps) *
+					program->global_uniform_count_ps);
+			glGetActiveUniformBlockiv(
+				program->obj, block_index,
+				GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES,
+				program->global_indices_ps);
+		}
+		bfree(block_name);
+	}
+
 	if (!assign_program_attribs(program))
 		goto error;
 	if (!assign_program_params(program))
@@ -718,6 +869,13 @@ void gs_program_destroy(struct gs_program *program)
 		program->next->prev_next = program->prev_next;
 	if (program->prev_next)
 		*program->prev_next = program->next;
+
+	if (program->global_uniform_count_vs > 0)
+		glDeleteBuffers(1, &program->globals_vs);
+	if (program->global_uniform_count_ps > 0)
+		glDeleteBuffers(1, &program->globals_ps);
+	bfree(program->global_indices_vs);
+	bfree(program->global_indices_ps);
 
 	glDeleteProgram(program->obj);
 	gl_success("glDeleteProgram");

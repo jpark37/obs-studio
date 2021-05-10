@@ -403,6 +403,8 @@ static bool create_dummy_window(struct gl_platform *plat)
 static bool init_default_swap(struct gl_platform *plat, gs_device_t *device,
 			      int pixel_format, PIXELFORMATDESCRIPTOR *pfd)
 {
+	UNUSED_PARAMETER(device);
+
 	if (!gl_setpixelformat(plat->window.hdc, pixel_format, pfd))
 		return false;
 
