@@ -1,5 +1,8 @@
 #include <obs-module.h>
 
+#include <process.h>
+#include <Windows.h>
+
 struct color_source {
 	struct vec4 color;
 	struct vec4 color_srgb;
@@ -8,6 +11,9 @@ struct color_source {
 	uint32_t height;
 
 	obs_source_t *src;
+
+	HANDLE handle;
+	volatile bool finished;
 };
 
 static const char *color_source_get_name(void *unused)
@@ -29,6 +35,55 @@ static void color_source_update(void *data, obs_data_t *settings)
 	context->height = height;
 }
 
+static unsigned __stdcall color_source_async_render(void *data)
+{
+	struct color_source *context = data;
+
+	uint8_t *const cool0 = malloc(1048576);
+	uint8_t *const cool1 = malloc(1048576);
+	uint8_t *const cool2 = malloc(1048576);
+	uint8_t *const cool3 = malloc(1048576);
+	for (int i = 0; i < 1048576 / 4; ++i) {
+		cool0[4 * i] = cool1[4 * i] = cool2[4 * i] = cool3[4 * i] =
+			0x90;
+		cool0[4 * i + 1] = cool1[4 * i + 1] = cool2[4 * i + 1] =
+			cool3[4 * i + 1] = 0x60;
+		cool0[4 * i + 2] = cool1[4 * i + 2] = cool2[4 * i + 2] =
+			cool3[4 * i + 2] = 0x90;
+		cool0[4 * i + 3] = cool1[4 * i + 3] = cool2[4 * i + 3] =
+			cool3[4 * i + 3] = 0x60;
+	}
+
+	while (!context->finished) {
+		_ReadWriteBarrier();
+
+		struct obs_source_frame2 frame;
+		video_format_get_parameters(VIDEO_CS_SRGB, VIDEO_RANGE_PARTIAL,
+					    frame.color_matrix,
+					    frame.color_range_min,
+					    frame.color_range_max);
+		frame.data[0] = cool0;
+		frame.data[1] = cool1;
+		frame.data[2] = cool2;
+		const uint32_t double_width =
+			((context->width + 1) & (UINT32_MAX - 1)) * 2;
+		frame.linesize[0] = double_width;
+		frame.linesize[1] = 0;
+		frame.linesize[2] = 0;
+		frame.width = context->width;
+		frame.height = context->height;
+		frame.timestamp = 0;
+		frame.format = VIDEO_FORMAT_UYVY;
+		frame.range = VIDEO_RANGE_PARTIAL;
+		frame.flip = false;
+		obs_source_output_video2(context->src, &frame);
+
+		Sleep(20);
+	}
+
+	return 0;
+}
+
 static void *color_source_create(obs_data_t *settings, obs_source_t *source)
 {
 	UNUSED_PARAMETER(source);
@@ -37,12 +92,19 @@ static void *color_source_create(obs_data_t *settings, obs_source_t *source)
 	context->src = source;
 
 	color_source_update(context, settings);
+	unsigned addr;
+	context->handle = (HANDLE)_beginthreadex(
+		NULL, 0, &color_source_async_render, context, 0, &addr);
 
 	return context;
 }
 
 static void color_source_destroy(void *data)
 {
+	struct color_source *const context = data;
+	context->finished = true;
+	WaitForSingleObject(context->handle, INFINITE);
+
 	bfree(data);
 }
 
@@ -84,27 +146,6 @@ static void color_source_render_helper(struct color_source *context,
 	gs_technique_end(tech);
 }
 
-static void color_source_render(void *data, gs_effect_t *effect)
-{
-	UNUSED_PARAMETER(effect);
-
-	struct color_source *context = data;
-
-	/* need linear path for correct alpha blending */
-	const bool linear_srgb = gs_get_linear_srgb() ||
-				 (context->color.w < 1.0f);
-
-	const bool previous = gs_framebuffer_srgb_enabled();
-	gs_enable_framebuffer_srgb(linear_srgb);
-
-	if (linear_srgb)
-		color_source_render_helper(context, &context->color_srgb);
-	else
-		color_source_render_helper(context, &context->color);
-
-	gs_enable_framebuffer_srgb(previous);
-}
-
 static uint32_t color_source_getwidth(void *data)
 {
 	struct color_source *context = data;
@@ -141,7 +182,7 @@ static void color_source_defaults_v3(obs_data_t *settings)
 struct obs_source_info color_source_info_v1 = {
 	.id = "color_source",
 	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
+	.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
 			OBS_SOURCE_CAP_OBSOLETE,
 	.create = color_source_create,
 	.destroy = color_source_destroy,
@@ -150,7 +191,6 @@ struct obs_source_info color_source_info_v1 = {
 	.get_defaults = color_source_defaults_v1,
 	.get_width = color_source_getwidth,
 	.get_height = color_source_getheight,
-	.video_render = color_source_render,
 	.get_properties = color_source_properties,
 	.icon_type = OBS_ICON_TYPE_COLOR,
 };
@@ -159,7 +199,7 @@ struct obs_source_info color_source_info_v2 = {
 	.id = "color_source",
 	.version = 2,
 	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
+	.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
 			OBS_SOURCE_CAP_OBSOLETE,
 	.create = color_source_create,
 	.destroy = color_source_destroy,
@@ -168,7 +208,6 @@ struct obs_source_info color_source_info_v2 = {
 	.get_defaults = color_source_defaults_v2,
 	.get_width = color_source_getwidth,
 	.get_height = color_source_getheight,
-	.video_render = color_source_render,
 	.get_properties = color_source_properties,
 	.icon_type = OBS_ICON_TYPE_COLOR,
 };
@@ -177,7 +216,7 @@ struct obs_source_info color_source_info_v3 = {
 	.id = "color_source",
 	.version = 3,
 	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
+	.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
 			OBS_SOURCE_SRGB,
 	.create = color_source_create,
 	.destroy = color_source_destroy,
@@ -186,7 +225,6 @@ struct obs_source_info color_source_info_v3 = {
 	.get_defaults = color_source_defaults_v3,
 	.get_width = color_source_getwidth,
 	.get_height = color_source_getheight,
-	.video_render = color_source_render,
 	.get_properties = color_source_properties,
 	.icon_type = OBS_ICON_TYPE_COLOR,
 };
