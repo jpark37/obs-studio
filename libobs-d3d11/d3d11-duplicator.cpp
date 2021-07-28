@@ -15,8 +15,12 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+#define USE_PIX
 #include "d3d11-subsystem.hpp"
 #include <unordered_map>
+#include "pix3.h"
+
+#pragma comment(lib, "../../libobs-d3d11/WinPixEventRuntime")
 
 static inline bool get_monitor(gs_device_t *device, int monitor_idx,
 			       IDXGIOutput **dxgiOutput)
@@ -209,7 +213,8 @@ EXPORT void gs_duplicator_destroy(gs_duplicator_t *duplicator)
 	}
 }
 
-static inline void copy_texture(gs_duplicator_t *d, ID3D11Texture2D *tex)
+static inline void copy_texture(gs_duplicator_t *d, ID3D11Texture2D *tex,
+				const DXGI_OUTDUPL_FRAME_INFO &info, int &index)
 {
 	D3D11_TEXTURE2D_DESC desc;
 	tex->GetDesc(&desc);
@@ -226,16 +231,29 @@ static inline void copy_texture(gs_duplicator_t *d, ID3D11Texture2D *tex)
 			desc.Width, desc.Height, srgb_format, 1, nullptr, 0);
 	}
 
-	if (!!d->texture)
+	if (!!d->texture) {
+		LARGE_INTEGER count;
+		QueryPerformanceCounter(&count);
+		d->qpc = count.QuadPart;
+		d->index = (int16_t)index;
+		d->present = info.LastPresentTime.QuadPart;
+		d->accum = (int16_t)info.AccumulatedFrames;
+		++index;
+
 		d->device->context->CopyResource(d->texture->texture, tex);
+	}
 }
 
 EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d)
 {
+	PIXScopedEvent(PIX_COLOR_DEFAULT, "gs_duplicator_update_frame");
+
 	DXGI_OUTDUPL_FRAME_INFO info;
 	ComPtr<ID3D11Texture2D> tex;
 	ComPtr<IDXGIResource> res;
 	HRESULT hr;
+
+	static int index;
 
 	if (!d->duplicator) {
 		return false;
@@ -244,7 +262,11 @@ EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d)
 		return true;
 	}
 
-	hr = d->duplicator->AcquireNextFrame(0, &info, res.Assign());
+	{
+		PIXScopedEvent(PIX_COLOR_DEFAULT, "AcquireNextFrame");
+		hr = d->duplicator->AcquireNextFrame(0, &info, res.Assign());
+	}
+
 	if (hr == DXGI_ERROR_ACCESS_LOST) {
 		return false;
 
@@ -270,14 +292,27 @@ EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d)
 		return true;
 	}
 
-	copy_texture(d, tex);
+	copy_texture(d, tex, info, index);
 	d->duplicator->ReleaseFrame();
 	d->updated = true;
 	return true;
 }
 
+LONGLONG previous_time;
+LONGLONG cools[1024];
+LONGLONG presents[1024];
+LONGLONG qpcs[1024];
+int accums[1024];
+size_t cool_index = 0;
+
 EXPORT gs_texture_t *gs_duplicator_get_texture(gs_duplicator_t *duplicator)
 {
+	cools[cool_index] = duplicator->index;
+	presents[cool_index] = duplicator->present;
+	qpcs[cool_index] = duplicator->qpc;
+	accums[cool_index] = duplicator->accum;
+	cool_index = (cool_index + 1) % _countof(cools);
+
 	return duplicator->texture;
 }
 }

@@ -761,6 +761,12 @@ struct gs_duplicator : gs_obj {
 	long refs;
 	bool updated;
 
+	LONGLONG present;
+	LONGLONG qpc;
+	uint32_t shared_handle{};
+	int16_t index;
+	int16_t accum;
+
 	void Start();
 
 	inline void Release() { duplicator.Release(); }
