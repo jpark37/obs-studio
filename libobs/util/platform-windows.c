@@ -33,6 +33,7 @@
 
 #define MAX_SZ_LEN 256
 
+static HANDLE hWaitableTimer;
 static bool have_clockfreq = false;
 static LARGE_INTEGER clock_freq;
 static uint32_t winver = 0;
@@ -329,29 +330,79 @@ void os_cpu_usage_info_destroy(os_cpu_usage_info_t *info)
 		bfree(info);
 }
 
+volatile LONGLONG jpt;
+volatile LONGLONG jptarget;
+volatile int jpbigiters;
+volatile LONGLONG jplastbig;
+volatile LONGLONG jpcool[1024];
+size_t jpindex;
 bool os_sleepto_ns(uint64_t time_target)
 {
-	uint64_t t = os_gettime_ns();
-	uint32_t milliseconds;
+	const double freq = (double)get_clockfreq();
+	const LONGLONG count_target =
+		(LONGLONG)((double)time_target * freq / 1000000000.0);
 
-	if (t >= time_target)
-		return false;
+	LARGE_INTEGER count;
+	QueryPerformanceCounter(&count);
 
-	milliseconds = (uint32_t)((time_target - t) / 1000000);
-	if (milliseconds > 1)
-		Sleep(milliseconds - 1);
+	int bigiters = 0;
 
-	for (;;) {
-		t = os_gettime_ns();
-		if (t >= time_target)
-			return true;
+	const bool stall = count.QuadPart < count_target;
+	if (stall) {
+		LONGLONG diff_count = count_target - count.QuadPart;
+		const LONGLONG ms_in_100ns = (LONGLONG)(freq / 1000.0);
+		const LONGLONG two_ms_count = (LONGLONG)(freq / 500.0);
+		while (diff_count >= two_ms_count) {
+			if (hWaitableTimer) {
+				const LONGLONG diff_100ns = (LONGLONG)(
+					(double)diff_count * 1e7 / freq);
 
-#if 0
-		Sleep(1);
-#else
-		Sleep(0);
-#endif
+				/* Allow 1.1 ms skid */
+				LARGE_INTEGER due_time;
+				due_time.QuadPart = -diff_100ns + 11000;
+				jplastbig = due_time.QuadPart;
+				SetWaitableTimer(hWaitableTimer, &due_time, 0,
+						 NULL, NULL, FALSE);
+				WaitForSingleObject(hWaitableTimer, INFINITE);
+				++bigiters;
+			} else {
+				jplastbig = diff_count;
+				const DWORD milliseconds = (DWORD)(
+					(double)diff_count * 1000.0 / freq);
+				Sleep(milliseconds - 1);
+			}
+
+			QueryPerformanceCounter(&count);
+			diff_count = count_target - count.QuadPart;
+
+			jpcool[jpindex] = diff_count;
+			jpindex = (jpindex + 1) % _countof(jpcool);
+
+			if (diff_count < -5000) {
+				jpt = count.QuadPart;
+				jptarget = count_target;
+				jpbigiters = bigiters;
+				__debugbreak();
+			}
+		}
+
+		if (bigiters > 1)
+			__debugbreak();
+
+		while (count.QuadPart < count_target) {
+			YieldProcessor();
+			QueryPerformanceCounter(&count);
+		}
+
+		if (count.QuadPart - count_target > 5000) {
+			jpt = count.QuadPart;
+			jptarget = count_target;
+			jpbigiters = bigiters;
+			__debugbreak();
+		}
 	}
+
+	return stall;
 }
 
 void os_sleep_ms(uint32_t duration)
@@ -773,12 +824,19 @@ BOOL WINAPI DllMain(HINSTANCE hinst_dll, DWORD reason, LPVOID reserved)
 
 	case DLL_PROCESS_ATTACH:
 		timeBeginPeriod(1);
+		hWaitableTimer = CreateWaitableTimerEx(
+			NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+			TIMER_ALL_ACCESS);
 #ifdef PTW32_STATIC_LIB
 		pthread_win32_process_attach_np();
 #endif
 		break;
 
 	case DLL_PROCESS_DETACH:
+		if (hWaitableTimer != NULL) {
+			CloseHandle(hWaitableTimer);
+			hWaitableTimer = NULL;
+		}
 		timeEndPeriod(1);
 #ifdef PTW32_STATIC_LIB
 		pthread_win32_process_detach_np();
