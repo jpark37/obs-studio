@@ -1000,6 +1000,50 @@ static inline void LogAdapterMonitors(IDXGIAdapter1 *adapter)
 	}
 }
 
+typedef HRESULT(WINAPI *PFN_DXGIDeclareAdapterRemovalSupport)();
+static void DeclareAdapterRemovalSupport()
+{
+	const HMODULE hModule = LoadLibraryA("dxgi.dll");
+	if (hModule) {
+		PFN_DXGIDeclareAdapterRemovalSupport
+			dxgiDeclareAdapterRemovalSupport =
+				(PFN_DXGIDeclareAdapterRemovalSupport)GetProcAddress(
+					hModule,
+					"DXGIDeclareAdapterRemovalSupport");
+		if (dxgiDeclareAdapterRemovalSupport) {
+			const HRESULT hr = dxgiDeclareAdapterRemovalSupport();
+			switch (hr) {
+			case DXGI_ERROR_INVALID_CALL:
+				blog(LOG_WARNING,
+				     "Called DXGIDeclareAdapterRemovalSupport too late");
+				break;
+			case DXGI_ERROR_ALREADY_EXISTS:
+				blog(LOG_WARNING,
+				     "DXGIDeclareAdapterRemovalSupport was already called");
+				break;
+			default:
+				if (SUCCEEDED(hr)) {
+					blog(LOG_INFO,
+					     "DXGIDeclareAdapterRemovalSupport succeeded",
+					     hr);
+				} else {
+					blog(LOG_WARNING,
+					     "DXGIDeclareAdapterRemovalSupport failed (0x%08lX)",
+					     hr);
+				}
+			}
+		} else {
+			blog(LOG_WARNING,
+			     "Could not find DXGIDeclareAdapterRemovalSupport");
+		}
+
+		FreeLibrary(hModule);
+	} else {
+		blog(LOG_WARNING,
+		     "Could not load dxgi.dll for DXGIDeclareAdapterRemovalSupport");
+	}
+}
+
 static inline void LogD3DAdapters()
 {
 	ComPtr<IDXGIFactory1> factory;
@@ -1068,6 +1112,9 @@ int device_create(gs_device_t **p_device, uint32_t adapter)
 	try {
 		blog(LOG_INFO, "---------------------------------");
 		blog(LOG_INFO, "Initializing D3D11...");
+
+		DeclareAdapterRemovalSupport();
+
 		LogD3DAdapters();
 
 		device = new gs_device(adapter);
