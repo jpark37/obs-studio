@@ -31,6 +31,8 @@
 
 #include "../../deps/w32-pthreads/pthread.h"
 
+#include <math.h>
+
 #define MAX_SZ_LEN 256
 
 static bool have_clockfreq = false;
@@ -329,6 +331,12 @@ void os_cpu_usage_info_destroy(os_cpu_usage_info_t *info)
 		bfree(info);
 }
 
+int jpstartup = 1000;
+int jphistogram[11];
+int jpsleephistogram[11];
+int jpsleeps;
+int jpcount;
+
 bool os_sleepto_ns(uint64_t time_target)
 {
 	uint64_t t = os_gettime_ns();
@@ -337,20 +345,63 @@ bool os_sleepto_ns(uint64_t time_target)
 	if (t >= time_target)
 		return false;
 
+	const HANDLE hThread = GetCurrentThread();
+	const int priority = GetThreadPriority(hThread);
+	SetThreadPriority(hThread, max(priority, THREAD_PRIORITY_ABOVE_NORMAL));
+
+	if (jpstartup > 0)
+		--jpstartup;
+
 	milliseconds = (uint32_t)((time_target - t) / 1000000);
-	if (milliseconds > 1)
+	if (milliseconds > 1) {
+		if (jpstartup == 0)
+			++jpsleeps;
 		Sleep(milliseconds - 1);
 
-	for (;;) {
 		t = os_gettime_ns();
-		if (t >= time_target)
-			return true;
 
-#if 0
-		Sleep(1);
-#else
-		Sleep(0);
-#endif
+		if (t >= time_target) {
+			if (jpstartup == 0) {
+				const uint64_t diff = t - time_target;
+				++jpsleephistogram
+					[diff ? (size_t)log10f((
+							float)(t - time_target)) +
+							 1
+					      : 0];
+				if (jpcount < 1000)
+					++jpcount;
+				else
+					__debugbreak();
+			}
+
+			SetThreadPriority(hThread, priority);
+			return true;
+		}
+	}
+
+	for (;;) {
+		//Sleep(0);
+		YieldProcessor();
+
+		t = os_gettime_ns();
+
+		if (t >= time_target) {
+			if (jpstartup == 0) {
+				const uint64_t diff = t - time_target;
+				++jphistogram[diff ? (size_t)log10f((
+							     float)(t -
+								    time_target)) +
+							      1
+						   : 0];
+				if (jpcount < 1000)
+					++jpcount;
+				else
+					__debugbreak();
+			}
+
+			SetThreadPriority(hThread, priority);
+			return true;
+		}
 	}
 }
 
