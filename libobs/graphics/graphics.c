@@ -2946,14 +2946,15 @@ void gs_duplicator_destroy(gs_duplicator_t *duplicator)
 	thread_graphics->exports.gs_duplicator_destroy(duplicator);
 }
 
-bool gs_duplicator_update_frame(gs_duplicator_t *duplicator)
+bool gs_duplicator_update_frame(gs_duplicator_t *duplicator, uint64_t interval)
 {
 	if (!gs_valid_p("gs_duplicator_update_frame", duplicator))
 		return false;
 	if (!thread_graphics->exports.gs_duplicator_update_frame)
 		return false;
 
-	return thread_graphics->exports.gs_duplicator_update_frame(duplicator);
+	return thread_graphics->exports.gs_duplicator_update_frame(duplicator,
+								   interval);
 }
 
 uint32_t gs_get_adapter_count(void)

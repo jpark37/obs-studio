@@ -890,7 +890,8 @@ EXPORT int gs_duplicator_get_monitor_index(void *monitor);
 EXPORT gs_duplicator_t *gs_duplicator_create(int monitor_idx);
 EXPORT void gs_duplicator_destroy(gs_duplicator_t *duplicator);
 
-EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *duplicator);
+EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *duplicator,
+				       uint64_t interval);
 EXPORT gs_texture_t *gs_duplicator_get_texture(gs_duplicator_t *duplicator);
 
 EXPORT uint32_t gs_get_adapter_count(void);

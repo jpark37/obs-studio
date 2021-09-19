@@ -296,7 +296,8 @@ struct gs_exports {
 						     int monitor_idx);
 	void (*gs_duplicator_destroy)(gs_duplicator_t *duplicator);
 
-	bool (*gs_duplicator_update_frame)(gs_duplicator_t *duplicator);
+	bool (*gs_duplicator_update_frame)(gs_duplicator_t *duplicator,
+					   uint64_t interval);
 	gs_texture_t *(*gs_duplicator_get_texture)(gs_duplicator_t *duplicator);
 
 	uint32_t (*gs_get_adapter_count)(void);

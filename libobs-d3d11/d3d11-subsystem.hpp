@@ -773,11 +773,12 @@ struct gs_vertex_shader : gs_shader {
 };
 
 constexpr int gs_cache_line_size = 64;
-constexpr int gs_duplicator_frame_count = 4;
+constexpr int gs_duplicator_frame_count = 32;
 
 struct gs_duplicator_frame {
 	uint32_t width = 0;
 	uint32_t height = 0;
+	uint64_t present_time = 0;
 	ComPtr<ID3D11Texture2D> worker_tex;
 	ComPtr<IDXGIKeyedMutex> worker_km;
 	gs_color_format format = GS_UNKNOWN;
@@ -943,6 +944,8 @@ struct gs_duplicator : gs_obj {
 	gs_duplicator_queue written_frames;
 
 	/* Worker thread members, cache-line aligned */
+	gs_duplicator_frame *pending_frames[gs_duplicator_frame_count];
+	size_t pending_frame_count;
 	gs_duplicator_frame *worker_frame;
 	ComPtr<ID3D11Device> worker_device;
 	ComPtr<ID3D11DeviceContext> worker_context;

@@ -16,6 +16,9 @@
 ******************************************************************************/
 
 #include "d3d11-subsystem.hpp"
+
+#include <obs.h>
+
 #include <unordered_map>
 #include <process.h>
 
@@ -172,6 +175,14 @@ static bool can_make_progress(gs_duplicator *d, bool &kill_thread)
 	return progress;
 }
 
+static uint64_t ms_converttime_os(LONGLONG ms_time)
+{
+	LARGE_INTEGER frequency;
+	QueryPerformanceFrequency(&frequency);
+	return (uint64_t)((double)ms_time *
+			  (1000000000.0 / (double)frequency.QuadPart));
+}
+
 static unsigned __stdcall duplicator_worker(void *data)
 {
 	gs_duplicator *const d = static_cast<gs_duplicator *>(data);
@@ -232,11 +243,18 @@ static unsigned __stdcall duplicator_worker(void *data)
 		} else {
 			d->acquired = true;
 
-			if (info.TotalMetadataBufferSize > 0) {
+			const LONGLONG ms_present_time =
+				info.LastPresentTime.QuadPart;
+			if ((ms_present_time != 0) &&
+			    (info.TotalMetadataBufferSize > 0)) {
 				ComPtr<ID3D11Texture2D> tex;
 				hr = res->QueryInterface(
 					IID_PPV_ARGS(tex.Assign()));
 				if (SUCCEEDED(hr)) {
+					assert(d->worker_frame);
+					d->worker_frame->present_time =
+						ms_converttime_os(
+							ms_present_time);
 					if (!copy_texture(d, tex))
 						break;
 				} else {
@@ -280,6 +298,8 @@ void gs_duplicator::Start()
 
 	while (written_frames.pop())
 		;
+
+	pending_frame_count = 0;
 
 	for (gs_duplicator_frame_padded &padded_frame : frame_cache) {
 		gs_duplicator_frame *const frame = &padded_frame.frame;
@@ -362,6 +382,8 @@ void gs_duplicator::Release()
 	WaitForSingleObject(worker_thread, INFINITE);
 	CloseHandle(worker_thread);
 	kill_thread.store(false, std::memory_order_relaxed);
+
+	pending_frame_count = 0;
 
 	while (written_frames.pop())
 		;
@@ -547,7 +569,151 @@ EXPORT void gs_duplicator_destroy(gs_duplicator_t *duplicator)
 	}
 }
 
-EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d)
+static bool make_shared_resources(gs_duplicator_frame *frame)
+{
+	gs_texture_2d *shared_tex = (gs_texture_2d *)gs_texture_open_shared(
+		(uint32_t)(uintptr_t)frame->shared_handle);
+	bool success = shared_tex != nullptr;
+	if (success) {
+		ComPtr<IDXGIKeyedMutex> shared_km;
+		HRESULT hr =
+			shared_tex->texture->QueryInterface(shared_km.Assign());
+		success = SUCCEEDED(hr);
+		if (success) {
+			delete frame->shared_tex;
+			frame->shared_tex = shared_tex;
+			frame->shared_km = std::move(shared_km);
+		} else {
+			blog(LOG_ERROR,
+			     "make_shared_resources: Failed to query "
+			     "IDXGIKeyedMutex (%08lX)",
+			     hr);
+			delete shared_tex;
+		}
+	} else {
+		blog(LOG_ERROR,
+		     "make_shared_resources: Failed to open shared texture");
+	}
+
+	return success;
+}
+
+gs_duplicator_frame *const determine_next_frame(gs_duplicator_t *d,
+						uint64_t interval)
+{
+	assert(interval > 0);
+
+	gs_duplicator_frame *next_frame = nullptr;
+
+	const uint64_t boundary = obs_get_video_frame_time() - 75000000;
+
+	gs_duplicator_queue &written_frames = d->written_frames;
+	gs_duplicator_frame **const pending_frames = d->pending_frames;
+	size_t pending_frame_count = d->pending_frame_count;
+
+	gs_duplicator_frame *written_frame;
+	while ((written_frame = written_frames.pop()) != nullptr) {
+		pending_frames[pending_frame_count] = written_frame;
+		++pending_frame_count;
+	}
+
+	if (pending_frame_count > 0) {
+		uint64_t previous_slot =
+			(pending_frames[0]->present_time - boundary) / interval;
+		size_t write_index = 0;
+		for (size_t i = 1; i < pending_frame_count; ++i) {
+			gs_duplicator_frame *const frame = pending_frames[i];
+			const uint64_t slot =
+				(frame->present_time - boundary) / interval;
+			if (previous_slot == slot) {
+				gs_duplicator_frame *previous_frame =
+					pending_frames[write_index];
+				IDXGIKeyedMutex *shared_km =
+					previous_frame->shared_km;
+				if (!shared_km) {
+					make_shared_resources(previous_frame);
+					shared_km = previous_frame->shared_km;
+				}
+				HRESULT hr = shared_km->AcquireSync(1, 0);
+				if (SUCCEEDED(hr)) {
+					hr = shared_km->ReleaseSync(0);
+					if (FAILED(hr)) {
+						blog(LOG_ERROR,
+						     "determine_next_frame: Failed to acquire sync 1 (%08lX)",
+						     hr);
+					}
+				} else {
+					blog(LOG_ERROR,
+					     "determine_next_frame: Failed to release sync 0 (%08lX)",
+					     hr);
+				}
+
+				d->available_frames.push(previous_frame);
+			} else {
+				previous_slot = slot;
+				++write_index;
+			}
+
+			pending_frames[write_index] = frame;
+		}
+
+		pending_frame_count = write_index + 1;
+	}
+
+	for (size_t i = 0; i < pending_frame_count; ++i) {
+		gs_duplicator_frame *const pending_frame = d->pending_frames[i];
+		const uint64_t present_time = pending_frame->present_time;
+		if (present_time < boundary) {
+			if ((next_frame == nullptr) ||
+			    (present_time > next_frame->present_time)) {
+				next_frame = pending_frame;
+			}
+		}
+	}
+
+	if (next_frame) {
+		size_t write_index = 0;
+		for (size_t i = 0; i < pending_frame_count; ++i) {
+			gs_duplicator_frame *const pending_frame =
+				pending_frames[i];
+			if (pending_frame == next_frame) {
+			} else if (pending_frame->present_time <=
+				   next_frame->present_time) {
+				IDXGIKeyedMutex *shared_km =
+					pending_frame->shared_km;
+				if (!shared_km) {
+					make_shared_resources(pending_frame);
+					shared_km = pending_frame->shared_km;
+				}
+				HRESULT hr = shared_km->AcquireSync(1, 0);
+				if (SUCCEEDED(hr)) {
+					hr = shared_km->ReleaseSync(0);
+					if (FAILED(hr)) {
+						blog(LOG_ERROR,
+						     "determine_next_frame: Failed to acquire sync 1 (%08lX)",
+						     hr);
+					}
+				} else {
+					blog(LOG_ERROR,
+					     "determine_next_frame: Failed to release sync 0 (%08lX)",
+					     hr);
+				}
+				d->available_frames.push(pending_frame);
+			} else {
+				pending_frames[write_index] = pending_frames[i];
+				++write_index;
+			}
+		}
+
+		pending_frame_count = write_index;
+	}
+
+	d->pending_frame_count = pending_frame_count;
+
+	return next_frame;
+}
+
+EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d, uint64_t interval)
 {
 	if (d->updated)
 		return true;
@@ -557,35 +723,11 @@ EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d)
 
 	bool success = true;
 
-	gs_duplicator_frame *const next_frame = d->written_frames.pop();
+	gs_duplicator_frame *const next_frame =
+		determine_next_frame(d, interval);
 	if (next_frame) {
 		if (!next_frame->shared_km) {
-			gs_texture_2d *shared_tex =
-				(gs_texture_2d *)gs_texture_open_shared(
-					next_frame->shared_handle);
-			success = shared_tex != nullptr;
-			if (success) {
-				ComPtr<IDXGIKeyedMutex> shared_km;
-				HRESULT hr =
-					shared_tex->texture->QueryInterface(
-						shared_km.Assign());
-				success = SUCCEEDED(hr);
-				if (success) {
-					delete next_frame->shared_tex;
-					next_frame->shared_tex = shared_tex;
-					next_frame->shared_km =
-						std::move(shared_km);
-				} else {
-					blog(LOG_ERROR,
-					     "gs_duplicator_update_frame: Failed to query "
-					     "IDXGIKeyedMutex (%08lX)",
-					     hr);
-					delete shared_tex;
-				}
-			} else {
-				blog(LOG_ERROR,
-				     "gs_duplicator_update_frame: Failed to open shared texture");
-			}
+			make_shared_resources(next_frame);
 		}
 
 		if (success) {

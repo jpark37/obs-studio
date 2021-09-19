@@ -443,7 +443,10 @@ static void duplicator_capture_tick(void *data, float seconds)
 			if (capture->capture_cursor)
 				cursor_capture(&capture->cursor_data);
 
-			if (!gs_duplicator_update_frame(capture->duplicator)) {
+			const uint64_t interval =
+				((seconds * 1000000000.0) + 0.5);
+			if (!gs_duplicator_update_frame(capture->duplicator,
+							interval)) {
 				free_capture_data(capture);
 
 			} else if (capture->width == 0) {
