@@ -18,6 +18,7 @@
 #include "d3d11-subsystem.hpp"
 
 #include <obs.h>
+#include <util/threading.h>
 
 #include <unordered_map>
 #include <process.h>
@@ -183,8 +184,13 @@ static uint64_t ms_converttime_os(LONGLONG ms_time)
 			  (1000000000.0 / (double)frequency.QuadPart));
 }
 
+LONGLONG workertimes[1024];
+LONGLONG dxgitimes[1024];
+size_t workercool;
 static unsigned __stdcall duplicator_worker(void *data)
 {
+	os_set_thread_name("d3d11 duplicator_worker");
+
 	gs_duplicator *const d = static_cast<gs_duplicator *>(data);
 
 	for (;;) {
@@ -232,7 +238,8 @@ static unsigned __stdcall duplicator_worker(void *data)
 
 			break;
 		} else if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
-			/* Nothing to do */
+			blog(LOG_ERROR, "duplicator_worker: Wait");
+
 		} else if (FAILED(hr)) {
 			blog(LOG_ERROR,
 			     "duplicator_worker: Failed to update "
@@ -257,6 +264,22 @@ static unsigned __stdcall duplicator_worker(void *data)
 							ms_present_time);
 					if (!copy_texture(d, tex))
 						break;
+					//
+					//static uint64_t jpcount;
+					//static LONGLONG previous;
+					//++jpcount;
+					//if (jpcount > 1000 && (ms_present_time - previous > 200000) || (info.AccumulatedFrames > 1)) {
+					//	__debugbreak();
+					//}
+					//previous = ms_present_time;
+
+					LARGE_INTEGER count;
+					QueryPerformanceCounter(&count);
+					workertimes[workercool] =
+						count.QuadPart;
+					dxgitimes[workercool] = ms_present_time;
+					workercool = (workercool + 1) % 1024;
+					//
 				} else {
 					blog(LOG_ERROR,
 					     "duplicator_worker: Failed to query "
@@ -598,6 +621,10 @@ static bool make_shared_resources(gs_duplicator_frame *frame)
 	return success;
 }
 
+LONGLONG videotimes[1024];
+LONGLONG videodxgitimes[1024];
+size_t videocool;
+
 gs_duplicator_frame *const determine_next_frame(gs_duplicator_t *d,
 						uint64_t interval)
 {
@@ -605,7 +632,8 @@ gs_duplicator_frame *const determine_next_frame(gs_duplicator_t *d,
 
 	gs_duplicator_frame *next_frame = nullptr;
 
-	const uint64_t boundary = obs_get_video_frame_time() - 75000000;
+	static uint64_t temp_flex = 75000000;
+	const uint64_t boundary = obs_get_video_frame_time() - temp_flex;
 
 	gs_duplicator_queue &written_frames = d->written_frames;
 	gs_duplicator_frame **const pending_frames = d->pending_frames;
@@ -617,61 +645,74 @@ gs_duplicator_frame *const determine_next_frame(gs_duplicator_t *d,
 		++pending_frame_count;
 	}
 
-	if (pending_frame_count > 0) {
-		uint64_t previous_slot =
-			(pending_frames[0]->present_time - boundary) / interval;
-		size_t write_index = 0;
-		for (size_t i = 1; i < pending_frame_count; ++i) {
-			gs_duplicator_frame *const frame = pending_frames[i];
-			const uint64_t slot =
-				(frame->present_time - boundary) / interval;
-			if (previous_slot == slot) {
-				gs_duplicator_frame *previous_frame =
-					pending_frames[write_index];
-				IDXGIKeyedMutex *shared_km =
-					previous_frame->shared_km;
-				if (!shared_km) {
-					make_shared_resources(previous_frame);
-					shared_km = previous_frame->shared_km;
-				}
-				HRESULT hr = shared_km->AcquireSync(1, 0);
-				if (SUCCEEDED(hr)) {
-					hr = shared_km->ReleaseSync(0);
-					if (FAILED(hr)) {
-						blog(LOG_ERROR,
-						     "determine_next_frame: Failed to acquire sync 1 (%08lX)",
-						     hr);
-					}
-				} else {
-					blog(LOG_ERROR,
-					     "determine_next_frame: Failed to release sync 0 (%08lX)",
-					     hr);
-				}
+	//if (pending_frame_count > 0) {
+	//	uint64_t previous_slot =
+	//		(pending_frames[0]->present_time - boundary) / interval;
+	//	size_t write_index = 0;
+	//	for (size_t i = 1; i < pending_frame_count; ++i) {
+	//		gs_duplicator_frame *const frame = pending_frames[i];
+	//		const uint64_t slot =
+	//			(frame->present_time - boundary) / interval;
+	//		if (previous_slot == slot) {
+	//			gs_duplicator_frame *previous_frame =
+	//				pending_frames[write_index];
+	//			IDXGIKeyedMutex *shared_km =
+	//				previous_frame->shared_km;
+	//			if (!shared_km) {
+	//				make_shared_resources(previous_frame);
+	//				shared_km = previous_frame->shared_km;
+	//			}
+	//			HRESULT hr = shared_km->AcquireSync(1, 0);
+	//			if (SUCCEEDED(hr)) {
+	//				hr = shared_km->ReleaseSync(0);
+	//				if (FAILED(hr)) {
+	//					blog(LOG_ERROR,
+	//					     "determine_next_frame: Failed to acquire sync 1 (%08lX)",
+	//					     hr);
+	//				}
+	//			} else {
+	//				blog(LOG_ERROR,
+	//				     "determine_next_frame: Failed to release sync 0 (%08lX)",
+	//				     hr);
+	//			}
 
-				d->available_frames.push(previous_frame);
-			} else {
-				previous_slot = slot;
-				++write_index;
-			}
+	//			d->available_frames.push(previous_frame);
+	//			d->worker_progress_ec.notify();
+	//		} else {
+	//			previous_slot = slot;
+	//			++write_index;
+	//		}
 
-			pending_frames[write_index] = frame;
-		}
+	//		pending_frames[write_index] = frame;
+	//	}
 
-		pending_frame_count = write_index + 1;
-	}
+	//	pending_frame_count = write_index + 1;
+	//}
 
+	uint64_t best_delta =
+		d->graphics_frame
+			? abs((int64_t)d->graphics_frame->present_time -
+			      (int64_t)boundary)
+			: UINT64_MAX;
 	for (size_t i = 0; i < pending_frame_count; ++i) {
 		gs_duplicator_frame *const pending_frame = d->pending_frames[i];
 		const uint64_t present_time = pending_frame->present_time;
-		if (present_time < boundary) {
-			if ((next_frame == nullptr) ||
-			    (present_time > next_frame->present_time)) {
-				next_frame = pending_frame;
+		const uint64_t delta =
+			abs((int64_t)present_time - (int64_t)boundary);
+		if (present_time < boundary + 8000000) {
+			if (delta < best_delta) {
+				if ((next_frame == nullptr) ||
+				    (present_time > next_frame->present_time)) {
+					next_frame = pending_frame;
+					best_delta = delta;
+				}
 			}
 		}
 	}
 
 	if (next_frame) {
+		//temp_flex += best_delta;
+
 		size_t write_index = 0;
 		for (size_t i = 0; i < pending_frame_count; ++i) {
 			gs_duplicator_frame *const pending_frame =
@@ -699,6 +740,7 @@ gs_duplicator_frame *const determine_next_frame(gs_duplicator_t *d,
 					     hr);
 				}
 				d->available_frames.push(pending_frame);
+				d->worker_progress_ec.notify();
 			} else {
 				pending_frames[write_index] = pending_frames[i];
 				++write_index;
@@ -723,8 +765,9 @@ EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d, uint64_t interval)
 
 	bool success = true;
 
-	gs_duplicator_frame *const next_frame =
-		determine_next_frame(d, interval);
+	//gs_duplicator_frame *const next_frame =
+	//	determine_next_frame(d, interval);
+	gs_duplicator_frame *const next_frame = d->written_frames.pop();
 	if (next_frame) {
 		if (!next_frame->shared_km) {
 			make_shared_resources(next_frame);
@@ -738,6 +781,15 @@ EXPORT bool gs_duplicator_update_frame(gs_duplicator_t *d, uint64_t interval)
 				gs_duplicator_frame *const available_frame =
 					d->graphics_frame;
 				d->graphics_frame = next_frame;
+
+				//
+				LARGE_INTEGER count;
+				QueryPerformanceCounter(&count);
+				videotimes[videocool] = count.QuadPart;
+				videodxgitimes[videocool] =
+					next_frame->present_time;
+				videocool = (videocool + 1) % 1024;
+				//
 
 				if (available_frame) {
 					const HRESULT hr =
