@@ -542,6 +542,11 @@ void DShowInput::OnVideoData(const VideoConfig &config, unsigned char *data,
 		return;
 	}
 
+	if (videoConfig.format == VideoFormat::HEVC) {
+		OnEncodedVideoData(AV_CODEC_ID_HEVC, data, size, startTime);
+		return;
+	}
+
 	if (videoConfig.format == VideoFormat::MJPEG) {
 		OnEncodedVideoData(AV_CODEC_ID_MJPEG, data, size, startTime);
 		return;
@@ -1404,6 +1409,7 @@ static const VideoFormatName videoFormatNames[] = {
 	/* encoded formats */
 	{VideoFormat::MJPEG, "MJPEG"},
 	{VideoFormat::H264, "H264"},
+	{VideoFormat::HEVC, "HEVC"},
 };
 
 static bool ResTypeChanged(obs_properties_t *props, obs_property_t *p,
