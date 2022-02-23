@@ -317,6 +317,7 @@ set(libobs_graphics_SOURCES
 	graphics/vec2.c
 	graphics/libnsgif/libnsgif.c
 	graphics/texture-render.c
+	graphics/dds-file.cpp
 	graphics/image-file.c
 	graphics/bounds.c
 	graphics/matrix3.c
@@ -342,6 +343,7 @@ set(libobs_graphics_HEADERS
 	graphics/graphics-internal.h
 	graphics/libnsgif/libnsgif.h
 	graphics/device-exports.h
+	graphics/dds-file.h
 	graphics/image-file.h
 	graphics/srgb.h
 	graphics/vec2.h
