@@ -197,7 +197,10 @@ void gs_zstencil_buffer::Rebuild(ID3D11Device *dev)
 
 void gs_stage_surface::Rebuild(ID3D11Device *dev)
 {
-	HRESULT hr = dev->CreateTexture2D(&td, nullptr, &texture);
+	HRESULT hr = device->d3d12Device->CreateCommittedResource(
+		&hp, D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS, &rd,
+		D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+		IID_PPV_ARGS(resource.Assign()));
 	if (FAILED(hr))
 		throw HRError("Failed to create staging surface", hr);
 }

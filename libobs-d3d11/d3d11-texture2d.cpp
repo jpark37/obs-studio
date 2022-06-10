@@ -94,6 +94,25 @@ void gs_texture_2d::GetSharedHandle(IDXGIResource *dxgi_res)
 	}
 }
 
+void gs_texture_2d::Release()
+{
+	if (resource) {
+		device->d3d11On12Device->ReleaseWrappedResources(
+			&static_cast<ID3D11Resource *const &>(texture.Get()),
+			1);
+		device->context->Flush();
+	}
+
+	texture.Detach();
+	for (ComPtr<ID3D11RenderTargetView> &rt : renderTarget)
+		rt.Release();
+	for (ComPtr<ID3D11RenderTargetView> &rt : renderTargetLinear)
+		rt.Release();
+	gdiSurface.Release();
+	shaderRes.Release();
+	shaderResLinear.Release();
+}
+
 void gs_texture_2d::InitTexture(const uint8_t *const *data)
 {
 	HRESULT hr;
@@ -114,26 +133,100 @@ void gs_texture_2d::InitTexture(const uint8_t *const *data)
 	if (type == GS_TEXTURE_CUBE)
 		td.MiscFlags |= D3D11_RESOURCE_MISC_TEXTURECUBE;
 
-	if (isRenderTarget || isGDICompatible)
+	D3D12_RESOURCE_FLAGS resourceFlags = D3D12_RESOURCE_FLAG_NONE;
+	if (isRenderTarget || isGDICompatible) {
 		td.BindFlags |= D3D11_BIND_RENDER_TARGET;
+		resourceFlags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+	}
 
 	if (isGDICompatible)
 		td.MiscFlags |= D3D11_RESOURCE_MISC_GDI_COMPATIBLE;
 
-	if ((flags & GS_SHARED_KM_TEX) != 0)
-		td.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
-	else if ((flags & GS_SHARED_TEX) != 0)
-		td.MiscFlags |= D3D11_RESOURCE_MISC_SHARED;
+	const bool d3d12 = !isDynamic &&
+			   ((td.Format == DXGI_FORMAT_R8_UNORM) ||
+			    (td.Format == DXGI_FORMAT_R8G8_UNORM) ||
+			    (td.Format == DXGI_FORMAT_R16_UNORM) ||
+			    (td.Format == DXGI_FORMAT_R16G16_UNORM) ||
+			    (td.Format == DXGI_FORMAT_NV12) ||
+			    (td.Format == DXGI_FORMAT_P010));
+	D3D12_COMPATIBILITY_SHARED_FLAGS compatibilityFlags =
+		D3D12_COMPATIBILITY_SHARED_FLAG_NONE;
+	if (d3d12) {
+		resourceFlags |= D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+		compatibilityFlags |=
+			D3D12_COMPATIBILITY_SHARED_FLAG_NON_NT_HANDLE;
+		if (flags & GS_SHARED_KM_TEX) {
+			td.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+			compatibilityFlags |=
+				D3D12_COMPATIBILITY_SHARED_FLAG_KEYED_MUTEX;
+		} else {
+			td.MiscFlags |= D3D11_RESOURCE_MISC_SHARED;
+		}
+	} else {
+		if (flags & GS_SHARED_KM_TEX) {
+			td.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+		} else if (flags & GS_SHARED_TEX) {
+			td.MiscFlags |= D3D11_RESOURCE_MISC_SHARED;
+		}
+	}
 
 	if (data) {
 		BackupTexture(data);
 		InitSRD(srd);
 	}
 
-	hr = device->device->CreateTexture2D(&td, data ? srd.data() : NULL,
-					     texture.Assign());
-	if (FAILED(hr))
-		throw HRError("Failed to create 2D texture", hr);
+	if (d3d12) {
+		hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+		hp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		hp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		hp.CreationNodeMask = 1;
+		hp.VisibleNodeMask = 1;
+		rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		rd.Alignment = 0;
+		rd.Width = width;
+		rd.Height = height;
+		rd.DepthOrArraySize = type == GS_TEXTURE_CUBE ? 6 : 1;
+		rd.MipLevels = genMipmaps ? 0 : levels;
+		rd.Format = td.Format;
+		rd.SampleDesc.Count = 1;
+		rd.SampleDesc.Quality = 0;
+		rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		rd.Flags = resourceFlags;
+		D3D11_RESOURCE_FLAGS flags11;
+		flags11.BindFlags = td.BindFlags;
+		flags11.MiscFlags = td.MiscFlags;
+		flags11.CPUAccessFlags = td.CPUAccessFlags;
+		flags11.StructureByteStride = 0;
+		hr = device->d3d12CompatibilityDevice->CreateSharedResource(
+			&hp, D3D12_HEAP_FLAG_SHARED, &rd,
+			D3D12_RESOURCE_STATE_COMMON, nullptr, &flags11,
+			compatibilityFlags, nullptr, nullptr,
+			IID_PPV_ARGS(resource.Assign()));
+		if (FAILED(hr)) {
+			throw HRError("Failed to CreateCommittedResource (2D)",
+				      hr);
+		}
+
+		hr = device->d3d11On12Device->CreateWrappedResource(
+			resource, &flags11, D3D12_RESOURCE_STATE_COMMON,
+			D3D12_RESOURCE_STATE_COMMON,
+			IID_PPV_ARGS(texture.Assign()));
+		if (FAILED(hr)) {
+			throw HRError("Failed to CreateWrappedResource (2D)",
+				      hr);
+		}
+
+		device->d3d11On12Device->AcquireWrappedResources(
+			&static_cast<ID3D11Resource *const &>(texture.Get()),
+			1);
+	}
+
+	if (!texture) {
+		hr = device->device->CreateTexture2D(
+			&td, data ? srd.data() : NULL, texture.Assign());
+		if (FAILED(hr))
+			throw HRError("Failed to create 2D texture", hr);
+	}
 
 	if (isGDICompatible) {
 		hr = texture->QueryInterface(__uuidof(IDXGISurface1),

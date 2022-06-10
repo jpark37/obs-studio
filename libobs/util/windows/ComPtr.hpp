@@ -141,7 +141,7 @@ public:
 		ptr = p;
 	}
 
-	inline T *Get() const { return ptr; }
+	inline T *const &Get() const { return ptr; }
 
 	inline T **operator&() { return Assign(); }
 

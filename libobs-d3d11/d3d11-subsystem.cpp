@@ -26,6 +26,8 @@
 #include <d3d9.h>
 #include "d3d11-subsystem.hpp"
 
+#pragma comment(lib, "d3d12")
+
 struct UnsupportedHWError : HRError {
 	inline UnsupportedHWError(const char *str, HRESULT hr)
 		: HRError(str, hr)
@@ -613,7 +615,7 @@ void gs_device::InitDevice(uint32_t adapterIdx)
 {
 	wstring adapterName;
 	DXGI_ADAPTER_DESC desc;
-	D3D_FEATURE_LEVEL levelUsed = D3D_FEATURE_LEVEL_10_0;
+	D3D_FEATURE_LEVEL levelUsed = D3D_FEATURE_LEVEL_11_0;
 	HRESULT hr = 0;
 
 	adpIdx = adapterIdx;
@@ -631,17 +633,53 @@ void gs_device::InitDevice(uint32_t adapterIdx)
 	blog(LOG_INFO, "Loading up D3D11 on adapter %s (%" PRIu32 ")",
 	     adapterNameUTF8.Get(), adapterIdx);
 
-	hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL,
-			       createFlags, featureLevels,
-			       sizeof(featureLevels) /
-				       sizeof(D3D_FEATURE_LEVEL),
-			       D3D11_SDK_VERSION, device.Assign(), &levelUsed,
-			       context.Assign());
+	hr = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0,
+			       IID_PPV_ARGS(d3d12Device.Assign()));
 	if (FAILED(hr))
-		throw UnsupportedHWError("Failed to create device", hr);
+		throw UnsupportedHWError("Failed to D3D12CreateDevice", hr);
+
+	hr = d3d12Device->QueryInterface<ID3D12CompatibilityDevice>(
+		d3d12CompatibilityDevice.Assign());
+	if (FAILED(hr)) {
+		throw UnsupportedHWError(
+			"Failed to query ID3D12CompatibilityDevice", hr);
+	}
+
+	D3D12_COMMAND_QUEUE_DESC desc3d;
+	desc3d.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+	desc3d.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+	desc3d.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+	desc3d.NodeMask = 0;
+	hr = d3d12Device->CreateCommandQueue(
+		&desc3d, IID_PPV_ARGS(d3d12Queue3D.Assign()));
+	if (FAILED(hr)) {
+		throw UnsupportedHWError(
+			"Failed to CreateCommandQueue (direct)", hr);
+	}
+
+	D3D12_COMMAND_QUEUE_DESC descCopy;
+	descCopy.Type = D3D12_COMMAND_LIST_TYPE_COPY;
+	descCopy.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+	descCopy.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+	descCopy.NodeMask = 0;
+	hr = d3d12Device->CreateCommandQueue(
+		&descCopy, IID_PPV_ARGS(d3d12QueueCopy.Assign()));
+	if (FAILED(hr)) {
+		throw UnsupportedHWError("Failed to CreateCommandQueue (copy)",
+					 hr);
+	}
+
+	D3D_FEATURE_LEVEL chosen;
+	hr = D3D11On12CreateDevice(d3d12Device.Get(), createFlags, &levelUsed,
+				   1, (IUnknown **)&d3d12Queue3D.Get(), 1, 0,
+				   device.Assign(), context.Assign(), &chosen);
+	if (FAILED(hr))
+		throw UnsupportedHWError("Failed to D3D11On12CreateDevice", hr);
+
+	d3d11On12Device = ComQIPtr<ID3D11On12Device>(device);
 
 	blog(LOG_INFO, "D3D11 loaded successfully, feature level used: %x",
-	     (unsigned int)levelUsed);
+	     (unsigned int)chosen);
 
 	/* prevent stalls sometimes seen in Present calls */
 	if (!increase_maximum_frame_latency(device)) {
@@ -2118,6 +2156,37 @@ inline void gs_device::CopyTex(ID3D11Texture2D *dst, uint32_t dst_x,
 	}
 }
 
+inline void gs_device::CopyTexToBuffer(ID3D12GraphicsCommandList *commandList,
+				       ID3D12CommandAllocator *allocator,
+				       ID3D12Resource *dst, gs_texture_t *src)
+{
+	if (src->type != GS_TEXTURE_2D)
+		throw "Source texture must be a 2D texture";
+
+	commandList->Reset(allocator, nullptr);
+
+	gs_texture_2d *tex2d = static_cast<gs_texture_2d *>(src);
+
+	D3D12_TEXTURE_COPY_LOCATION dstLocation;
+	dstLocation.pResource = dst;
+	dstLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	UINT64 x, y;
+	d3d12Device->GetCopyableFootprints(&tex2d->resource->GetDesc(), 0, 1, 0,
+					   &dstLocation.PlacedFootprint,
+					   nullptr, &x, &y);
+	D3D12_TEXTURE_COPY_LOCATION srcLocation;
+	srcLocation.pResource = tex2d->resource;
+	srcLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	srcLocation.SubresourceIndex = 0;
+	commandList->CopyTextureRegion(&dstLocation, 0, 0, 0, &srcLocation,
+				       nullptr);
+
+	commandList->Close();
+
+	d3d12QueueCopy->ExecuteCommandLists(
+		1, &static_cast<ID3D12CommandList *const &>(commandList));
+}
+
 static DXGI_FORMAT get_copy_compare_format(gs_color_format format)
 {
 	switch (format) {
@@ -2205,7 +2274,20 @@ void device_stage_texture(gs_device_t *device, gs_stagesurf_t *dst,
 			throw "Source and destination must have the same "
 			      "dimensions";
 
-		device->CopyTex(dst->texture, 0, 0, src, 0, 0, 0, 0);
+		device->d3d11On12Device->ReleaseWrappedResources(
+			&static_cast<ID3D11Resource *const &>(
+				src2d->texture.Get()),
+			1);
+
+		device->context->Flush();
+
+		device->CopyTexToBuffer(dst->commandList, dst->allocator,
+					dst->resource, src);
+
+		device->d3d11On12Device->AcquireWrappedResources(
+			&static_cast<ID3D11Resource *const &>(
+				src2d->texture.Get()),
+			1);
 
 	} catch (const char *error) {
 		blog(LOG_ERROR, "device_copy_texture (D3D11): %s", error);
@@ -2812,19 +2894,18 @@ gs_stagesurface_get_color_format(const gs_stagesurf_t *stagesurf)
 bool gs_stagesurface_map(gs_stagesurf_t *stagesurf, uint8_t **data,
 			 uint32_t *linesize)
 {
-	D3D11_MAPPED_SUBRESOURCE map;
-	if (FAILED(stagesurf->device->context->Map(stagesurf->texture, 0,
-						   D3D11_MAP_READ, 0, &map)))
+	void *pData;
+	if (FAILED(stagesurf->resource->Map(0, nullptr, &pData)))
 		return false;
 
-	*data = (uint8_t *)map.pData;
-	*linesize = map.RowPitch;
+	*data = (uint8_t *)pData;
+	*linesize = (uint32_t)stagesurf->rowPitch;
 	return true;
 }
 
 void gs_stagesurface_unmap(gs_stagesurf_t *stagesurf)
 {
-	stagesurf->device->context->Unmap(stagesurf->texture, 0);
+	stagesurf->resource->Unmap(0, nullptr);
 }
 
 void gs_zstencil_destroy(gs_zstencil_t *zstencil)

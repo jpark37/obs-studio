@@ -28,6 +28,9 @@
 #include <dxgi1_6.h>
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
+#include <d3d11on12.h>
+#include <d3d12.h>
+#include <d3d12compatibility.h>
 
 #include <util/base.h>
 #include <graphics/matrix4.h>
@@ -499,6 +502,7 @@ struct gs_texture : gs_obj {
 
 struct gs_texture_2d : gs_texture {
 	ComPtr<ID3D11Texture2D> texture;
+	ComPtr<ID3D12Resource> resource;
 	ComPtr<ID3D11RenderTargetView> renderTarget[6];
 	ComPtr<ID3D11RenderTargetView> renderTargetLinear[6];
 	ComPtr<IDXGISurface1> gdiSurface;
@@ -523,6 +527,8 @@ struct gs_texture_2d : gs_texture {
 	vector<vector<uint8_t>> data;
 	vector<D3D11_SUBRESOURCE_DATA> srd;
 	D3D11_TEXTURE2D_DESC td = {};
+	D3D12_HEAP_PROPERTIES hp = {};
+	D3D12_RESOURCE_DESC rd = {};
 
 	void InitSRD(vector<D3D11_SUBRESOURCE_DATA> &srd);
 	void InitTexture(const uint8_t *const *data);
@@ -536,19 +542,10 @@ struct gs_texture_2d : gs_texture {
 	void RebuildPaired_Y(ID3D11Device *dev);
 	void RebuildPaired_UV(ID3D11Device *dev);
 
-	inline void Release()
-	{
-		texture.Release();
-		for (ComPtr<ID3D11RenderTargetView> &rt : renderTarget)
-			rt.Release();
-		for (ComPtr<ID3D11RenderTargetView> &rt : renderTargetLinear)
-			rt.Release();
-		gdiSurface.Release();
-		shaderRes.Release();
-		shaderResLinear.Release();
-	}
+	void Release();
 
 	inline gs_texture_2d() : gs_texture(GS_TEXTURE_2D, 0, GS_UNKNOWN) {}
+	virtual ~gs_texture_2d() { Release(); }
 
 	gs_texture_2d(gs_device_t *device, uint32_t width, uint32_t height,
 		      gs_color_format colorFormat, uint32_t levels,
@@ -641,8 +638,12 @@ struct gs_zstencil_buffer : gs_obj {
 };
 
 struct gs_stage_surface : gs_obj {
-	ComPtr<ID3D11Texture2D> texture;
-	D3D11_TEXTURE2D_DESC td = {};
+	ComPtr<ID3D12CommandAllocator> allocator;
+	ComPtr<ID3D12GraphicsCommandList> commandList;
+	ComPtr<ID3D12Resource> resource;
+	UINT rowPitch = 0;
+	D3D12_HEAP_PROPERTIES hp = {};
+	D3D12_RESOURCE_DESC rd = {};
 
 	uint32_t width, height;
 	gs_color_format format;
@@ -650,12 +651,24 @@ struct gs_stage_surface : gs_obj {
 
 	void Rebuild(ID3D11Device *dev);
 
-	inline void Release() { texture.Release(); }
+	inline void Release()
+	{
+		/* TODO: Wait for GPU done */
+		resource->Release();
+		resource = nullptr;
+	}
 
 	gs_stage_surface(gs_device_t *device, uint32_t width, uint32_t height,
 			 gs_color_format colorFormat);
 	gs_stage_surface(gs_device_t *device, uint32_t width, uint32_t height,
 			 bool p010);
+
+	virtual ~gs_stage_surface()
+	{
+		resource.Detach();
+		commandList.Detach();
+		allocator.Detach();
+	}
 };
 
 struct gs_sampler_state : gs_obj {
@@ -985,6 +998,12 @@ struct gs_device {
 	ComPtr<IDXGIAdapter1> adapter;
 	ComPtr<ID3D11Device> device;
 	ComPtr<ID3D11DeviceContext> context;
+	ComPtr<ID3D12Device> d3d12Device;
+	ComPtr<ID3D12CompatibilityDevice> d3d12CompatibilityDevice;
+	ComPtr<ID3D11On12Device> d3d11On12Device;
+	ComPtr<ID3D12CommandQueue> d3d12Queue3D;
+	ComPtr<ID3D12CommandQueue> d3d12QueueCopy;
+	uint32_t allocatorIdx = 0;
 	uint32_t adpIdx = 0;
 	bool nv12Supported = false;
 	bool p010Supported = false;
@@ -1056,6 +1075,9 @@ struct gs_device {
 	inline void CopyTex(ID3D11Texture2D *dst, uint32_t dst_x,
 			    uint32_t dst_y, gs_texture_t *src, uint32_t src_x,
 			    uint32_t src_y, uint32_t src_w, uint32_t src_h);
+	inline void CopyTexToBuffer(ID3D12GraphicsCommandList *commandList,
+				    ID3D12CommandAllocator *allocator,
+				    ID3D12Resource *dst, gs_texture_t *src);
 
 	void UpdateViewProjMatrix();
 
