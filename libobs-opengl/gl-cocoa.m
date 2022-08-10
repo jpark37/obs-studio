@@ -52,6 +52,8 @@ static NSOpenGLContext *gl_context_create(NSOpenGLContext *share)
 
 	ADD_ATTR(NSOpenGLPFADoubleBuffer);
 	ADD_ATTR2(NSOpenGLPFAOpenGLProfile, NSOpenGLProfileVersion3_2Core);
+	ADD_ATTR(NSOpenGLPFAColorFloat);
+	ADD_ATTR2(NSOpenGLPFAColorSize, 64);
 	ADD_ATTR(0);
 
 #undef ADD_ATTR2
@@ -197,7 +199,11 @@ struct gl_windowinfo *gl_windowinfo_create(const struct gs_init_data *info)
 	struct gl_windowinfo *wi = bzalloc(sizeof(struct gl_windowinfo));
 
 	wi->view = info->window.view;
-	[info->window.view setWantsBestResolutionOpenGLSurface:YES];
+	[wi->view setWantsBestResolutionOpenGLSurface:YES];
+	[wi->view setWantsExtendedDynamicRangeOpenGLSurface:YES];
+	[wi->view.layer setWantsExtendedDynamicRangeContent:YES];
+	[wi->view.window setDepthLimit:NSWindowDepthSixtyfourBitRGB];
+	wi->view.window.colorSpace =[[NSColorSpace alloc] initWithCGColorSpace: CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearSRGB)];
 
 	return wi;
 }
@@ -283,7 +289,7 @@ void device_load_swapchain(gs_device_t *device, gs_swapchain_t *swap)
 
 	device->cur_swap = swap;
 	if (swap) {
-		device_set_render_target(device, swap->wi->texture, NULL);
+		device_set_render_target_with_color_space(device, swap->wi->texture, NULL, GS_CS_709_EXTENDED);
 	}
 }
 
