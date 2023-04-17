@@ -737,6 +737,18 @@ static int obs_init_video(struct obs_video_info *ovi)
 		util_mul_div64(1000000000ULL, ovi->fps_den, ovi->fps_num);
 	video->video_half_frame_interval_ns =
 		util_mul_div64(500000000ULL, ovi->fps_den, ovi->fps_num);
+	blog(LOG_WARNING, "JP: %" PRIu64, UINT64_C(0));
+	blog(LOG_WARNING, "JP: %" PRIu64, util_mul_div64(0, 12345, 54321));
+	blog(LOG_WARNING, "JP: %" PRIu64, UINT64_C(10885644));
+	blog(LOG_WARNING, "JP: %" PRIu64, util_mul_div64(12345, 12345, 14));
+	blog(LOG_WARNING, "JP: %" PRIu64, UINT64_C(167648186250000000));
+	blog(LOG_WARNING, "JP: %" PRIu64,
+	     util_mul_div64(12345000000000000ULL, 54321000000000000ULL,
+			    4000000000000000ULL));
+	blog(LOG_WARNING, "JP: %" PRIu64, UINT64_C(167648186249999790));
+	blog(LOG_WARNING, "JP: %" PRIu64,
+	     util_mul_div64(12345000000000000ULL, 54321000000000000ULL,
+			    4000000000000005ULL));
 
 	if (pthread_mutex_init(&video->task_mutex, NULL) < 0)
 		return OBS_VIDEO_FAIL;
