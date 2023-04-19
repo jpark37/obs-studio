@@ -137,9 +137,26 @@ float4 PSDrawBicubicRGBA(FragData f_in, bool undistort) : TARGET
 	return DrawBicubic(f_in, undistort);
 }
 
+float4 PSDrawBicubicRGBABT1886(FragData f_in, bool undistort) : TARGET
+{
+	float4 rgba = DrawBicubic(f_in, undistort);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
+	return rgba;
+}
+
 float4 PSDrawBicubicRGBAMultiply(FragData f_in, bool undistort) : TARGET
 {
 	float4 rgba = DrawBicubic(f_in, undistort);
+	rgba.rgb *= multiplier;
+	return rgba;
+}
+
+float4 PSDrawBicubicRGBAMultiplyBT1886(FragData f_in, bool undistort) : TARGET
+{
+	float4 rgba = DrawBicubic(f_in, undistort);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
 	rgba.rgb *= multiplier;
 	return rgba;
 }
@@ -179,12 +196,30 @@ technique Draw
 	}
 }
 
+technique DrawBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDrawBicubicRGBABT1886(f_in, false);
+	}
+}
+
 technique DrawMultiply
 {
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
 		pixel_shader  = PSDrawBicubicRGBAMultiply(f_in, false);
+	}
+}
+
+technique DrawMultiplyBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawBicubicRGBAMultiplyBT1886(f_in, false);
 	}
 }
 
@@ -224,12 +259,30 @@ technique DrawUndistort
 	}
 }
 
+technique DrawUndistortBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDrawBicubicRGBABT1886(f_in, true);
+	}
+}
+
 technique DrawUndistortMultiply
 {
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
 		pixel_shader  = PSDrawBicubicRGBAMultiply(f_in, true);
+	}
+}
+
+technique DrawUndistortMultiplyBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawBicubicRGBAMultiplyBT1886(f_in, true);
 	}
 }
 

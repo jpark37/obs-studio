@@ -297,107 +297,65 @@ get_tech_name_and_multiplier(const struct scale_filter_data *filter,
 		}
 	}
 
-	const char *tech_name = "Draw";
-	if (filter->undistort) {
-		tech_name = "DrawUndistort";
-		switch (source_space) {
+	const bool undistort = filter->undistort;
+	const bool upscale = filter->upscale;
+	const char *tech_name = undistort ? "DrawUndistort"
+					  : (upscale ? "DrawUpscale" : "Draw");
+	switch (source_space) {
+	case GS_CS_SRGB:
+	case GS_CS_SRGB_16F:
+		switch (current_space) {
 		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
-			if (current_space == GS_CS_709_SCRGB)
-				tech_name = "DrawUndistortMultiply";
 			break;
 		case GS_CS_709_EXTENDED:
-			switch (current_space) {
-			case GS_CS_SRGB:
-			case GS_CS_SRGB_16F:
-				tech_name = "DrawUndistortTonemap";
-				break;
-			case GS_CS_709_SCRGB:
-				tech_name = "DrawUndistortMultiply";
-				break;
-			case GS_CS_709_EXTENDED:
-				break;
-			}
+			tech_name = undistort ? "DrawUndistortBT1886"
+					      : (upscale ? "DrawUpscaleBT1886"
+							 : "DrawBT1886");
 			break;
 		case GS_CS_709_SCRGB:
-			switch (current_space) {
-			case GS_CS_SRGB:
-			case GS_CS_SRGB_16F:
-				tech_name = "DrawUndistortMultiplyTonemap";
-				break;
-			case GS_CS_709_EXTENDED:
-				tech_name = "DrawUndistortMultiply";
-				break;
-			case GS_CS_709_SCRGB:
-				break;
-			}
+			tech_name =
+				undistort
+					? "DrawUndistortMultiplyBT1886"
+					: (upscale ? "DrawUpscaleMultiplyBT1886"
+						   : "DrawMultiplyBT1886");
+			break;
 		}
-	} else if (filter->upscale) {
-		tech_name = "DrawUpscale";
-		switch (source_space) {
+		break;
+	case GS_CS_709_EXTENDED:
+		switch (current_space) {
 		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
-			if (current_space == GS_CS_709_SCRGB)
-				tech_name = "DrawUpscaleMultiply";
+			tech_name = undistort ? "DrawUndistortTonemap"
+					      : (upscale ? "DrawUpscaleTonemap"
+							 : "DrawTonemap");
 			break;
 		case GS_CS_709_EXTENDED:
-			switch (current_space) {
-			case GS_CS_SRGB:
-			case GS_CS_SRGB_16F:
-				tech_name = "DrawUpscaleTonemap";
-				break;
-			case GS_CS_709_SCRGB:
-				tech_name = "DrawUpscaleMultiply";
-				break;
-			case GS_CS_709_EXTENDED:
-				break;
-			}
 			break;
 		case GS_CS_709_SCRGB:
-			switch (current_space) {
-			case GS_CS_SRGB:
-			case GS_CS_SRGB_16F:
-				tech_name = "DrawUpscaleMultiplyTonemap";
-				break;
-			case GS_CS_709_EXTENDED:
-				tech_name = "DrawUpscaleMultiply";
-				break;
-			case GS_CS_709_SCRGB:
-				break;
-			}
+			tech_name = undistort ? "DrawUndistortMultiply"
+					      : (upscale ? "DrawUpscaleMultiply"
+							 : "DrawMultiply");
+			break;
 		}
-	} else {
-		switch (source_space) {
+		break;
+	case GS_CS_709_SCRGB:
+		switch (current_space) {
 		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
-			if (current_space == GS_CS_709_SCRGB)
-				tech_name = "DrawMultiply";
+			tech_name =
+				undistort
+					? "DrawUndistortMultiplyTonemap"
+					: (upscale ? "DrawUpscaleMultiplyTonemap"
+						   : "DrawMultiplyTonemap");
 			break;
 		case GS_CS_709_EXTENDED:
-			switch (current_space) {
-			case GS_CS_SRGB:
-			case GS_CS_SRGB_16F:
-				tech_name = "DrawTonemap";
-				break;
-			case GS_CS_709_SCRGB:
-				tech_name = "DrawMultiply";
-				break;
-			case GS_CS_709_EXTENDED:
-				break;
-			}
+			tech_name = undistort ? "DrawUndistortMultiply"
+					      : (upscale ? "DrawUpscaleMultiply"
+							 : "DrawMultiply");
 			break;
 		case GS_CS_709_SCRGB:
-			switch (current_space) {
-			case GS_CS_SRGB:
-			case GS_CS_SRGB_16F:
-				tech_name = "DrawMultiplyTonemap";
-				break;
-			case GS_CS_709_EXTENDED:
-				tech_name = "DrawMultiply";
-				break;
-			case GS_CS_709_SCRGB:
-				break;
-			}
+			break;
 		}
 	}
 

@@ -60,9 +60,26 @@ float4 PSDrawLowresBilinearRGBA(VertData f_in) : TARGET
 	return DrawLowresBilinear(f_in);
 }
 
+float4 PSDrawLowresBilinearRGBABT1886(VertData f_in) : TARGET
+{
+	float4 rgba = DrawLowresBilinear(f_in);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
+	return rgba;
+}
+
 float4 PSDrawLowresBilinearRGBAMultiply(VertData f_in) : TARGET
 {
 	float4 rgba = DrawLowresBilinear(f_in);
+	rgba.rgb *= multiplier;
+	return rgba;
+}
+
+float4 PSDrawLowresBilinearRGBAMultiplyBT1886(VertData f_in) : TARGET
+{
+	float4 rgba = DrawLowresBilinear(f_in);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
 	rgba.rgb *= multiplier;
 	return rgba;
 }
@@ -102,12 +119,30 @@ technique Draw
 	}
 }
 
+technique DrawBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawLowresBilinearRGBABT1886(f_in);
+	}
+}
+
 technique DrawMultiply
 {
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
 		pixel_shader  = PSDrawLowresBilinearRGBAMultiply(f_in);
+	}
+}
+
+technique DrawMultiplyBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawLowresBilinearRGBAMultiplyBT1886(f_in);
 	}
 }
 

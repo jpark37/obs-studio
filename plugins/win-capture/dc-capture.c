@@ -205,16 +205,20 @@ void dc_capture_render(struct dc_capture *capture, bool texcoords_centered)
 		const char *tech_name = "Draw";
 		float multiplier = 1.f;
 		switch (gs_get_color_space()) {
+		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
-		case GS_CS_709_EXTENDED:
 			if (!linear_sample)
 				tech_name = "DrawSrgbDecompress";
 			break;
+		case GS_CS_709_EXTENDED:
+			tech_name = linear_sample ? "DrawBT1886"
+						  : "DrawSrgbDecompressBT1886";
+			break;
 		case GS_CS_709_SCRGB:
-			if (linear_sample)
-				tech_name = "DrawMultiply";
-			else
-				tech_name = "DrawSrgbDecompressMultiply";
+			tech_name =
+				linear_sample
+					? "DrawMultiplyBT1886"
+					: "DrawSrgbDecompressMultiplyBT1886";
 			multiplier = obs_get_video_sdr_white_level() / 80.f;
 		}
 

@@ -91,9 +91,26 @@ float4 PSDrawAreaRGBA(FragData frag_in) : TARGET
 	return DrawArea(frag_in);
 }
 
+float4 PSDrawAreaRGBABT1886(FragData frag_in) : TARGET
+{
+	float4 rgba = DrawArea(frag_in);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
+	return rgba;
+}
+
 float4 PSDrawAreaRGBAMultiply(FragData frag_in) : TARGET
 {
 	float4 rgba = DrawArea(frag_in);
+	rgba.rgb *= multiplier;
+	return rgba;
+}
+
+float4 PSDrawAreaRGBAMultiplyBT1886(FragData frag_in) : TARGET
+{
+	float4 rgba = DrawArea(frag_in);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
 	rgba.rgb *= multiplier;
 	return rgba;
 }
@@ -158,9 +175,26 @@ float4 PSDrawAreaRGBAUpscale(FragData frag_in) : TARGET
 	return DrawAreaUpscale(frag_in);
 }
 
+float4 PSDrawAreaRGBAUpscaleBT1886(FragData frag_in) : TARGET
+{
+	float4 rgba = DrawAreaUpscale(frag_in);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
+	return rgba;
+}
+
 float4 PSDrawAreaRGBAUpscaleMultiply(FragData frag_in) : TARGET
 {
 	float4 rgba = DrawAreaUpscale(frag_in);
+	rgba.rgb *= multiplier;
+	return rgba;
+}
+
+float4 PSDrawAreaRGBAUpscaleMultiplyBT1886(FragData frag_in) : TARGET
+{
+	float4 rgba = DrawAreaUpscale(frag_in);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
 	rgba.rgb *= multiplier;
 	return rgba;
 }
@@ -190,6 +224,24 @@ technique Draw
 	{
 		vertex_shader = VSDefault(vert_in);
 		pixel_shader  = PSDrawAreaRGBA(frag_in);
+	}
+}
+
+technique DrawBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSDrawAreaRGBABT1886(frag_in);
+	}
+}
+
+technique DrawMultiplyBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSDrawAreaRGBAMultiplyBT1886(frag_in);
 	}
 }
 
@@ -238,12 +290,30 @@ technique DrawUpscale
 	}
 }
 
+technique DrawUpscaleBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSDrawAreaRGBAUpscaleBT1886(frag_in);
+	}
+}
+
 technique DrawUpscaleMultiply
 {
 	pass
 	{
 		vertex_shader = VSDefault(vert_in);
 		pixel_shader  = PSDrawAreaRGBAUpscaleMultiply(frag_in);
+	}
+}
+
+technique DrawUpscaleMultiplyBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSDrawAreaRGBAUpscaleMultiplyBT1886(frag_in);
 	}
 }
 

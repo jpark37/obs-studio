@@ -2550,24 +2550,36 @@ static inline void obs_source_render_async_video(obs_source_t *source)
 			switch (current_space) {
 			case GS_CS_SRGB:
 			case GS_CS_SRGB_16F:
-			case GS_CS_709_EXTENDED:
 				if (nonlinear_alpha)
 					tech_name = "DrawNonlinearAlpha";
+				break;
+			case GS_CS_709_EXTENDED:
+				tech_name = nonlinear_alpha
+						    ? "DrawNonlinearAlphaBT1886"
+						    : "DrawBT1886";
 				break;
 			case GS_CS_709_SCRGB:
 				tech_name =
 					nonlinear_alpha
-						? "DrawNonlinearAlphaMultiply"
-						: "DrawMultiply";
+						? "DrawNonlinearAlphaMultiplyBT1886"
+						: "DrawMultiplyBT1886";
 				multiplier =
 					obs_get_video_sdr_white_level() / 80.0f;
 			}
 			break;
 		case GS_CS_SRGB_16F:
-			if (current_space == GS_CS_709_SCRGB) {
-				tech_name = "DrawMultiply";
+			switch (current_space) {
+			case GS_CS_SRGB:
+			case GS_CS_SRGB_16F:
+				break;
+			case GS_CS_709_EXTENDED:
+				tech_name = "DrawBT1886";
+				break;
+			case GS_CS_709_SCRGB:
+				tech_name = "DrawMultiplyBT1886";
 				multiplier =
 					obs_get_video_sdr_white_level() / 80.0f;
+				break;
 			}
 			break;
 		case GS_CS_709_EXTENDED:
@@ -2721,10 +2733,10 @@ static void source_render(obs_source_t *source, gs_effect_t *effect)
 	case GS_CS_SRGB_16F:
 		switch (current_space) {
 		case GS_CS_709_EXTENDED:
-			convert_tech = "Draw";
+			convert_tech = "DrawBT1886";
 			break;
 		case GS_CS_709_SCRGB:
-			convert_tech = "DrawMultiply";
+			convert_tech = "DrawMultiplyBT1886";
 			multiplier = obs_get_video_sdr_white_level() / 80.0f;
 			break;
 		case GS_CS_SRGB:

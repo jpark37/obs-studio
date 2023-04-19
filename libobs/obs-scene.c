@@ -607,20 +607,14 @@ static void render_item_texture(struct obs_scene_item *item,
 	}
 
 	float multiplier = 1.f;
-
-	if (current_space == GS_CS_709_SCRGB) {
-		switch (source_space) {
-		case GS_CS_SRGB:
-		case GS_CS_SRGB_16F:
-		case GS_CS_709_EXTENDED:
+	switch (source_space) {
+	case GS_CS_SRGB:
+	case GS_CS_SRGB_16F:
+	case GS_CS_709_EXTENDED:
+		if (current_space == GS_CS_709_SCRGB)
 			multiplier = obs_get_video_sdr_white_level() / 80.f;
-			break;
-		case GS_CS_709_SCRGB:
-			break;
-		}
-	}
-
-	if (source_space == GS_CS_709_SCRGB) {
+		break;
+	case GS_CS_709_SCRGB:
 		switch (current_space) {
 		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
@@ -632,52 +626,55 @@ static void render_item_texture(struct obs_scene_item *item,
 		}
 	}
 
-	const char *tech_name = "Draw";
-	if (upscale) {
-		tech_name = "DrawUpscale";
-		switch (source_space) {
+	const char *tech_name = upscale ? "DrawUpscale" : "Draw";
+	switch (source_space) {
+	case GS_CS_SRGB:
+	case GS_CS_SRGB_16F:
+		switch (current_space) {
 		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
-			if (current_space == GS_CS_709_SCRGB)
-				tech_name = "DrawUpscaleMultiply";
 			break;
 		case GS_CS_709_EXTENDED:
-			if (current_space == GS_CS_SRGB ||
-			    current_space == GS_CS_SRGB_16F)
-				tech_name = "DrawUpscaleTonemap";
-			else if (current_space == GS_CS_709_SCRGB)
-				tech_name = "DrawUpscaleMultiply";
+			tech_name = upscale ? "DrawUpscaleBT1886"
+					    : "DrawBT1886";
 			break;
 		case GS_CS_709_SCRGB:
-			if (current_space == GS_CS_SRGB ||
-			    current_space == GS_CS_SRGB_16F)
-				tech_name = "DrawUpscaleMultiplyTonemap";
-			else if (current_space == GS_CS_709_EXTENDED)
-				tech_name = "DrawUpscaleMultiply";
+			tech_name = upscale ? "DrawUpscaleMultiplyBT1886"
+					    : "DrawMultiplyBT1886";
 			break;
 		}
-	} else {
-		switch (source_space) {
+		break;
+	case GS_CS_709_EXTENDED:
+		switch (current_space) {
 		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
-			if (current_space == GS_CS_709_SCRGB)
-				tech_name = "DrawMultiply";
+			tech_name = upscale ? "DrawUpscaleTonemap"
+					    : "DrawTonemap";
 			break;
 		case GS_CS_709_EXTENDED:
-			if (current_space == GS_CS_SRGB ||
-			    current_space == GS_CS_SRGB_16F)
-				tech_name = "DrawTonemap";
-			else if (current_space == GS_CS_709_SCRGB)
-				tech_name = "DrawMultiply";
 			break;
 		case GS_CS_709_SCRGB:
-			if (current_space == GS_CS_SRGB ||
-			    current_space == GS_CS_SRGB_16F)
-				tech_name = "DrawMultiplyTonemap";
-			else if (current_space == GS_CS_709_EXTENDED)
-				tech_name = "DrawMultiply";
+			tech_name = upscale ? "DrawUpscaleMultiply"
+					    : "DrawMultiply";
 			break;
 		}
+		break;
+	case GS_CS_709_SCRGB:
+		switch (current_space) {
+		case GS_CS_SRGB:
+		case GS_CS_SRGB_16F:
+			tech_name = upscale ? "DrawUpscaleMultiplyTonemap"
+					    : "DrawMultiplyTonemap";
+			tech_name = "";
+			break;
+		case GS_CS_709_EXTENDED:
+			tech_name = upscale ? "DrawUpscaleMultiply"
+					    : "DrawMultiply";
+			break;
+		case GS_CS_709_SCRGB:
+			break;
+		}
+		break;
 	}
 
 	gs_eparam_t *const multiplier_param =

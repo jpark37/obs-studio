@@ -634,9 +634,17 @@ get_tech_name_and_multiplier(enum gs_color_space current_space,
 	switch (source_space) {
 	case GS_CS_SRGB:
 	case GS_CS_SRGB_16F:
-		if (current_space == GS_CS_709_SCRGB) {
-			tech_name = "DrawMultiply";
+		switch (current_space) {
+		case GS_CS_SRGB:
+		case GS_CS_SRGB_16F:
+			break;
+		case GS_CS_709_EXTENDED:
+			tech_name = "DrawBT1886";
+			break;
+		case GS_CS_709_SCRGB:
+			tech_name = "DrawMultiplyBT1886";
 			*multiplier = obs_get_video_sdr_white_level() / 80.0f;
+			break;
 		}
 		break;
 	case GS_CS_709_EXTENDED:

@@ -2222,17 +2222,37 @@ static void obs_render_main_texture_internal(enum gs_blend_type src_c,
 	const enum gs_color_space current_space = gs_get_color_space();
 	const char *tech_name = "Draw";
 	float multiplier = 1.f;
-	switch (current_space) {
+	switch (source_space) {
 	case GS_CS_SRGB:
 	case GS_CS_SRGB_16F:
-		if (source_space == GS_CS_709_EXTENDED)
-			tech_name = "DrawTonemap";
-		break;
-	case GS_CS_709_SCRGB:
-		tech_name = "DrawMultiply";
-		multiplier = obs_get_video_sdr_white_level() / 80.f;
+		switch (current_space) {
+		case GS_CS_SRGB:
+		case GS_CS_SRGB_16F:
+			break;
+		case GS_CS_709_EXTENDED:
+			tech_name = "DrawBT1886";
+			break;
+		case GS_CS_709_SCRGB:
+			tech_name = "DrawMultiplyBT1886";
+			multiplier = obs_get_video_sdr_white_level() / 80.f;
+			break;
+		}
 		break;
 	case GS_CS_709_EXTENDED:
+		switch (current_space) {
+		case GS_CS_SRGB:
+		case GS_CS_SRGB_16F:
+			tech_name = "DrawTonemap";
+			break;
+		case GS_CS_709_EXTENDED:
+			break;
+		case GS_CS_709_SCRGB:
+			tech_name = "DrawMultiply";
+			multiplier = obs_get_video_sdr_white_level() / 80.f;
+			break;
+		}
+		break;
+	case GS_CS_709_SCRGB:
 		break;
 	}
 

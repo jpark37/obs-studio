@@ -669,10 +669,24 @@ extern "C" EXPORT void winrt_capture_render(struct winrt_capture *capture)
 				tech_name = "DrawMultiply";
 				multiplier =
 					80.f / obs_get_video_sdr_white_level();
+				break;
+			case GS_CS_709_SCRGB:
+				break;
 			}
-		} else if (current_space == GS_CS_709_SCRGB) {
-			tech_name = "DrawMultiply";
-			multiplier = obs_get_video_sdr_white_level() / 80.f;
+		} else {
+			switch (current_space) {
+			case GS_CS_SRGB:
+			case GS_CS_SRGB_16F:
+				break;
+			case GS_CS_709_EXTENDED:
+				tech_name = "DrawBT1886";
+				break;
+			case GS_CS_709_SCRGB:
+				tech_name = "DrawMultiplyBT1886";
+				multiplier =
+					obs_get_video_sdr_white_level() / 80.f;
+				break;
+			}
 		}
 
 		gs_effect_t *const effect =

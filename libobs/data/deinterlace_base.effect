@@ -267,10 +267,25 @@ VertData VSDefault(VertData v_in)
 	return vert_out;
 }
 
-#define TECHNIQUE(rgba_ps, rgba_ps_multiply, rgba_ps_tonemap, rgba_ps_multiply_tonemap) \
+#define TECHNIQUE(rgba_ps, rgba_ps_bt1886, rgba_ps_multiply, rgba_ps_multiply_bt1886, rgba_ps_tonemap, rgba_ps_multiply_tonemap) \
+float4 rgba_ps_bt1886(VertData v_in) : TARGET \
+{ \
+	float4 rgba = rgba_ps(v_in); \
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb); \
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4)); \
+	return rgba; \
+} \
 float4 rgba_ps_multiply(VertData v_in) : TARGET \
 { \
 	float4 rgba = rgba_ps(v_in); \
+	rgba.rgb *= multiplier; \
+	return rgba; \
+} \
+float4 rgba_ps_multiply_bt1886(VertData v_in) : TARGET \
+{ \
+	float4 rgba = rgba_ps(v_in); \
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb); \
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4)); \
 	rgba.rgb *= multiplier; \
 	return rgba; \
 } \
@@ -299,12 +314,28 @@ technique Draw \
 		pixel_shader  = rgba_ps(v_in); \
 	} \
 } \
+technique DrawBT1886 \
+{ \
+	pass \
+	{ \
+		vertex_shader = VSDefault(v_in); \
+		pixel_shader  = rgba_ps_bt1886(v_in); \
+	} \
+} \
 technique DrawMultiply \
 { \
 	pass \
 	{ \
 		vertex_shader = VSDefault(v_in); \
 		pixel_shader  = rgba_ps_multiply(v_in); \
+	} \
+} \
+technique DrawMultiplyBT1886 \
+{ \
+	pass \
+	{ \
+		vertex_shader = VSDefault(v_in); \
+		pixel_shader  = rgba_ps_multiply_bt1886(v_in); \
 	} \
 } \
 technique DrawTonemap \

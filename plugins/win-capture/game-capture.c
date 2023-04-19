@@ -2075,15 +2075,16 @@ static void game_capture_render(void *data, gs_effect_t *unused)
 			break;
 		case GS_CS_SRGB_16F:
 		case GS_CS_709_EXTENDED:
-			if (!linear_sample)
-				tech_name = "DrawSrgbDecompress";
+			tech_name = linear_sample ? "DrawBT1886"
+						  : "DrawSrgbDecompressBT1886";
 			break;
 		case GS_CS_709_SCRGB:
-			if (linear_sample)
-				tech_name = "DrawMultiply";
-			else
-				tech_name = "DrawSrgbDecompressMultiply";
+			tech_name =
+				linear_sample
+					? "DrawMultiplyBT1886"
+					: "DrawSrgbDecompressMultiplyBT1886";
 			multiplier = obs_get_video_sdr_white_level() / 80.f;
+			break;
 		}
 		break;
 	case GS_CS_SRGB_16F:
@@ -2091,15 +2092,20 @@ static void game_capture_render(void *data, gs_effect_t *unused)
 		switch (current_space) {
 		case GS_CS_SRGB:
 		case GS_CS_SRGB_16F:
-		case GS_CS_709_EXTENDED:
 			tech_name = is_10a2_compressed ? "DrawSrgbDecompress"
 						       : "Draw";
+			break;
+		case GS_CS_709_EXTENDED:
+			tech_name = is_10a2_compressed
+					    ? "DrawSrgbDecompressBT1886"
+					    : "DrawBT1886";
 			break;
 		case GS_CS_709_SCRGB:
 			tech_name = is_10a2_compressed
 					    ? "DrawSrgbDecompressMultiply"
 					    : "DrawMultiply";
 			multiplier = obs_get_video_sdr_white_level() / 80.f;
+			break;
 		}
 		break;
 	case GS_CS_709_EXTENDED:

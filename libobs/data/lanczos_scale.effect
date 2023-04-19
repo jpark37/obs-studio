@@ -193,9 +193,26 @@ float4 PSDrawLanczosRGBA(FragData f_in, bool undistort) : TARGET
 	return DrawLanczos(f_in, undistort);
 }
 
+float4 PSDrawLanczosRGBABT1886(FragData f_in, bool undistort) : TARGET
+{
+	float4 rgba = DrawLanczos(f_in, undistort);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
+	return rgba;
+}
+
 float4 PSDrawLanczosRGBAMultiply(FragData f_in, bool undistort) : TARGET
 {
 	float4 rgba = DrawLanczos(f_in, undistort);
+	rgba.rgb *= multiplier;
+	return rgba;
+}
+
+float4 PSDrawLanczosRGBAMultiplyBT1886(FragData f_in, bool undistort) : TARGET
+{
+	float4 rgba = DrawLanczos(f_in, undistort);
+	rgba.rgb = srgb_linear_to_nonlinear(rgba.rgb);
+	rgba.rgb = pow(rgba.rgb, float3(2.4, 2.4, 2.4));
 	rgba.rgb *= multiplier;
 	return rgba;
 }
@@ -235,12 +252,30 @@ technique Draw
 	}
 }
 
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawLanczosRGBABT1886(f_in, false);
+	}
+}
+
 technique DrawMultiply
 {
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
 		pixel_shader  = PSDrawLanczosRGBAMultiply(f_in, false);
+	}
+}
+
+technique DrawMultiplyBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawLanczosRGBAMultiplyBT1886(f_in, false);
 	}
 }
 
@@ -280,12 +315,30 @@ technique DrawUndistort
 	}
 }
 
+technique DrawUndistortBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawLanczosRGBABT1886(f_in, true);
+	}
+}
+
 technique DrawUndistortMultiply
 {
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
 		pixel_shader  = PSDrawLanczosRGBAMultiply(f_in, true);
+	}
+}
+
+technique DrawUndistortMultiplyBT1886
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawLanczosRGBAMultiplyBT1886(f_in, true);
 	}
 }
 
