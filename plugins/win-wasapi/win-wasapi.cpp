@@ -180,6 +180,11 @@ class WASAPISource {
 	const SourceType sourceType;
 	std::atomic<bool> useDeviceTiming = false;
 	std::atomic<bool> isDefaultDevice = false;
+	uint8_t waveSamples
+		[48000 * 4 * 2 * 2 *
+		 60]{}; // assume 48000 Hz, 32-bit float, stereo, 2 minutes
+	DWORD waveSampleCursor = 0;
+	bool waveSampleWrap = false;
 
 	bool previouslyFailed = false;
 	WinHandle reconnectThread = NULL;
@@ -531,6 +536,47 @@ void WASAPISource::Stop()
 	SetEvent(stopSignal);
 
 	blog(LOG_INFO, "WASAPI: Device '%s' Terminated", device_name.c_str());
+
+	if ((sourceType == SourceType::ProcessOutput) &&
+	    (waveSampleWrap || (waveSampleCursor > 0))) {
+		WCHAR lpTempPathBuffer[MAX_PATH];
+		if (GetTempPath(MAX_PATH, lpTempPathBuffer)) {
+			WCHAR szTempFileName[MAX_PATH];
+			if (GetTempFileNameW(lpTempPathBuffer,
+					     TEXT("OBSWASAPI"), 0,
+					     szTempFileName)) {
+				HANDLE hTempFile = CreateFileW(
+					(LPTSTR)szTempFileName, // file name
+					GENERIC_WRITE, // open for write
+					0,             // do not share
+					NULL,          // default security
+					CREATE_ALWAYS, // overwrite existing
+					FILE_ATTRIBUTE_NORMAL, // normal file
+					NULL);                 // no template
+				if (hTempFile != INVALID_HANDLE_VALUE) {
+					DWORD written;
+					if (waveSampleWrap) {
+						WriteFile(
+							hTempFile,
+							waveSamples +
+								waveSampleCursor,
+							_countof(waveSamples) -
+								waveSampleCursor,
+							&written, NULL);
+					}
+					WriteFile(hTempFile, waveSamples,
+						  waveSampleCursor, &written,
+						  NULL);
+					CloseHandle(hTempFile);
+					blog(LOG_INFO,
+					     "WASAPI: Wrote circular buffer of audio: %ls",
+					     szTempFileName);
+				}
+			}
+		}
+		waveSampleCursor = 0;
+		waveSampleWrap = false;
+	}
 
 	if (rtwq_supported)
 		SetEvent(receiveSignal);
@@ -1107,6 +1153,25 @@ bool WASAPISource::ProcessCaptureData()
 				     " failed: %lX",
 				     res);
 			return false;
+		}
+
+		DWORD remaining = frames *
+				  (DWORD)get_audio_bytes_per_channel(format) *
+				  get_audio_channels(speakers);
+		DWORD copy_size = min(remaining,
+				      _countof(waveSamples) - waveSampleCursor);
+		BYTE *cursor = buffer;
+		memcpy(&waveSamples[waveSampleCursor], cursor, copy_size);
+		waveSampleCursor += copy_size;
+		remaining -= copy_size;
+		cursor += copy_size;
+		while (waveSampleCursor == _countof(waveSamples)) {
+			waveSampleWrap = true;
+			copy_size = min(remaining, _countof(waveSamples));
+			memcpy(waveSamples, cursor, copy_size);
+			waveSampleCursor = copy_size;
+			remaining -= copy_size;
+			cursor += copy_size;
 		}
 
 		obs_source_audio data = {};
