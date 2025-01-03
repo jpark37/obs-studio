@@ -371,7 +371,7 @@ static void decklink_ui_render(void *param)
 
 	gs_effect_t *const effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"), tex);
-	const char *const tech_name = target_hdr ? "DrawAlphaDivideR10L"
+	const char *const tech_name = target_hdr ? "DrawAlphaDivideR12L"
 						 : (source_hdr ? "DrawAlphaDivideTonemap" : "DrawAlphaDivide");
 	while (gs_effect_loop(effect, tech_name)) {
 		gs_effect_set_float(gs_effect_get_param_by_name(effect, "multiplier"),

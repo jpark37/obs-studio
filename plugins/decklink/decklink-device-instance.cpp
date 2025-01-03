@@ -582,7 +582,7 @@ bool DeckLinkDeviceInstance::StartOutput(DeckLinkDeviceMode *mode_)
 	const bool enable_hdr =
 		source_hdr &&
 		(obs_output_get_video_conversion(decklinkOutput->GetOutput())->colorspace == VIDEO_CS_2100_PQ);
-	BMDPixelFormat pixelFormat = enable_hdr ? bmdFormat10BitRGBXLE : bmdFormat8BitBGRA;
+	BMDPixelFormat pixelFormat = enable_hdr ? bmdFormat12BitRGBLE : bmdFormat8BitBGRA;
 	const int64_t minimumPrerollFrames = std::max(device->GetMinimumPrerollFrames(), INT64_C(3));
 	for (int64_t i = 0; i < minimumPrerollFrames; ++i) {
 		ComPtr<IDeckLinkMutableVideoFrame> decklinkOutputFrame;

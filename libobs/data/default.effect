@@ -45,17 +45,127 @@ float4 PSDrawAlphaDivideTonemap(VertInOut vert_in) : TARGET
 	return rgba;
 }
 
-float4 PSDrawAlphaDivideR10L(VertInOut vert_in) : TARGET
+float3 ProcessAlphaDividePQ(float4 rgba)
 {
-	float4 rgba = image.Sample(def_sampler, vert_in.uv);
 	rgba.rgb *= (rgba.a > 0.) ? (multiplier / rgba.a) : 0.;
 	rgba.rgb = rec709_to_rec2020(rgba.rgb);
 	rgba.rgb = linear_to_st2084(rgba.rgb);
+	return rgba.rgb;
+}
+
+float4 PSDrawAlphaDivideR10L(VertInOut vert_in) : TARGET
+{
+	float4 rgba = image.Sample(def_sampler, vert_in.uv);
+	rgba.rgb = ProcessAlphaDividePQ(rgba);
 	uint3 rgb1023 = uint3(mad(rgba.rgb, 876., 64.5));
 	uint b = (rgb1023.b & 0x3Fu) << 2;
 	uint g = ((rgb1023.b & 0x3C0u) >> 6) | ((rgb1023.g & 0xFu) << 4);
 	uint r = ((rgb1023.g & 0x3F0u) >> 4) | ((rgb1023.r & 0x3u) << 6);
 	uint a = ((rgb1023.r & 0x3FCu) >> 2);
+	return float4(uint4(r, g, b, a)) / 255.;
+}
+
+
+float4 PSDrawAlphaDivideR12L(VertInOut vert_in) : TARGET
+{
+	int x = vert_in.pos.x;
+	int x0 = x - ((x + 8) / 9);
+	int x1 = x0 + 1;
+	int y = vert_in.pos.y;
+	float4 rgba0 = image.Load(int3(x0, y, 0));
+	float4 rgba1 = image.Load(int3(x1, y, 0));
+	rgba0.rgb = ProcessAlphaDividePQ(rgba0);
+	rgba1.rgb = ProcessAlphaDividePQ(rgba1);
+	uint3 rgb0 = uint3(mad(rgba0.rgb, 4095., .5));
+	uint3 rgb1 = uint3(mad(rgba1.rgb, 4095., .5));
+	int index = x % 9;
+	int pattern = x % 3;
+	uint channel0;
+	uint channel1;
+	uint channel2;
+	uint channel3;
+	uint b;
+	uint g;
+	uint r;
+	uint a;
+	if (pattern == 0)
+	{
+		if (index == 0)
+		{
+			channel0 = rgb0.r;
+			channel1 = rgb0.g;
+			channel2 = rgb0.b;
+		}
+		else if (index == 3)
+		{
+			channel0 = rgb0.b;
+			channel1 = rgb1.r;
+			channel2 = rgb1.g;
+		}
+		else
+		{
+			channel0 = rgb0.g;
+			channel1 = rgb0.b;
+			channel2 = rgb1.r;
+		}
+		b = channel0 & 0xff;
+		g = (channel0 & 0xf00) >> 8 | ((channel1 & 0xf) << 4);
+		b = (channel1 & 0xff0) >> 4;
+		a = channel2 & 0xff;
+	}
+	else if (pattern == 1)
+	{
+		if (index == 1)
+		{
+			channel0 = rgb0.b;
+			channel1 = rgb1.r;
+			channel2 = rgb1.g;
+			channel3 = rgb1.b;
+		}
+		else if (index == 4)
+		{
+			channel0 = rgb0.g;
+			channel1 = rgb0.b;
+			channel2 = rgb1.r;
+			channel3 = rgb1.g;
+		}
+		else
+		{
+			channel0 = rgb0.r;
+			channel1 = rgb0.g;
+			channel2 = rgb0.b;
+			channel3 = rgb1.r;
+		}
+		b = (channel0 & 0xf00) >> 8 | ((channel1 & 0xf) << 4);
+		g = (channel1 & 0xff0) >> 4;
+		r = channel2 & 0xff;
+		a = (channel2 & 0xf00) >> 8 | ((channel3 & 0xf) << 4);
+	}
+	else
+	{
+		if (index == 2)
+		{
+			channel0 = rgb0.b;
+			channel1 = rgb1.r;
+			channel2 = rgb1.g;
+		}
+		else if (index == 5)
+		{
+			channel0 = rgb0.g;
+			channel1 = rgb0.b;
+			channel2 = rgb1.r;
+		}
+		else
+		{
+			channel0 = rgb0.r;
+			channel1 = rgb0.g;
+			channel2 = rgb0.b;
+		}
+		b = (channel0 & 0xff0) >> 4;
+		g = channel1 & 0xff;
+		r = (channel1 & 0xf00) >> 8 | ((channel2 & 0xf) << 4);
+		a = (channel2 & 0xff0) >> 4;
+	}
 	return float4(uint4(r, g, b, a)) / 255.;
 }
 
@@ -169,6 +279,15 @@ technique DrawAlphaDivideR10L
 	{
 		vertex_shader = VSDefault(vert_in);
 		pixel_shader  = PSDrawAlphaDivideR10L(vert_in);
+	}
+}
+
+technique DrawAlphaDivideR12L
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSDrawAlphaDivideR12L(vert_in);
 	}
 }
 

@@ -750,6 +750,7 @@ static void set_gpu_converted_data(struct video_frame *output, const struct vide
 	case VIDEO_FORMAT_AYUV:
 	case VIDEO_FORMAT_V210:
 	case VIDEO_FORMAT_R10L:
+	case VIDEO_FORMAT_R12L:
 		/* unimplemented */
 		;
 	}
