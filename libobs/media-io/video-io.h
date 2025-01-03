@@ -94,6 +94,9 @@ enum video_format {
 
 	/* packed uncompressed 10-bit format */
 	VIDEO_FORMAT_R10L,
+
+	/* packed uncompressed 12-bit format */
+	VIDEO_FORMAT_R12L,
 };
 
 enum video_trc {

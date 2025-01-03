@@ -31,13 +31,15 @@ static void *decklink_output_create(obs_data_t *settings, obs_output_t *output)
 	if (device) {
 		DeckLinkDeviceMode *mode = device->FindOutputMode(decklinkOutput->modeID);
 
+		const bool hdr = (device->GetSupportsHDRMetadata() && !decklinkOutput->force_sdr);
+		const int width = mode->GetWidth();
+		const int adjusted_width = ((width + 7) / 8) * 9;
 		struct video_scale_info to = {};
 		to.format = VIDEO_FORMAT_BGRA;
-		to.width = mode->GetWidth();
+		to.width = adjusted_width;
 		to.height = mode->GetHeight();
 		to.range = VIDEO_RANGE_FULL;
-		to.colorspace = (device->GetSupportsHDRMetadata() && !decklinkOutput->force_sdr) ? VIDEO_CS_2100_PQ
-												 : VIDEO_CS_709;
+		to.colorspace = hdr ? VIDEO_CS_2100_PQ : VIDEO_CS_709;
 
 		obs_output_set_video_conversion(output, &to);
 	}
